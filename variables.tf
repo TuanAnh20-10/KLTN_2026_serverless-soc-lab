@@ -3,6 +3,11 @@ variable "project_id" {
   type        = string
 }
 
+variable "project_number" {
+  description = "Number cua du an Google Cloud"
+  type        = string
+}
+
 variable "organization_id" {
   description = "Organization ID dung cho Security Command Center"
   type        = string
@@ -47,4 +52,21 @@ variable "scc_source_description" {
   description = "Mo ta cho SCC custom source"
   type        = string
   default     = "Custom source for KLTN serverless SOC lab"
+}
+
+variable "gemini_api_key" {
+  description = "API Key for Gemini Model"
+  type        = string
+  sensitive   = true
+}
+
+variable "tele_bot_token" {
+  description = "Telegram Bot Token"
+  type        = string
+  sensitive   = true
+}
+
+variable "tele_chat_id" {
+  description = "Telegram Chat ID"
+  type        = string
 }
