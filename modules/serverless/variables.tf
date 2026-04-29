@@ -23,6 +23,16 @@ variable "scc_source_id" {
   type        = string
 }
 
+variable "scc_source_name" {
+  description = "Full SCC Custom Source resource name"
+  type        = string
+}
+
+variable "organization_id" {
+  description = "Organization ID for SCC"
+  type        = string
+}
+
 variable "pubsub_topic_id" {
   description = "The Pub/Sub Topic ID that triggers the Cloud Function (from Module 4)"
   type        = string
@@ -42,5 +52,26 @@ variable "tele_bot_token" {
 
 variable "tele_chat_id" {
   description = "Telegram Chat ID"
+  type        = string
+}
+
+variable "approval_signing_secret" {
+  description = "Secret used to sign approval links"
+  type        = string
+  sensitive   = true
+}
+
+variable "approval_max_age_seconds" {
+  description = "Approval link expiration in seconds"
+  type        = number
+}
+
+variable "orchestrator_source_dir" {
+  description = "Absolute path to the orchestrator source directory"
+  type        = string
+}
+
+variable "webhook_source_dir" {
+  description = "Absolute path to the webhook remediation source directory"
   type        = string
 }

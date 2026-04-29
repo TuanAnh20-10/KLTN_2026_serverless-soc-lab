@@ -34,6 +34,32 @@ output "scc_source_name" {
   value       = module.scc.source_name
 }
 
+output "realtime_pubsub_topic_id" {
+  description = "Pub/Sub topic ID used to trigger the orchestrator bot"
+  value       = module.logging_data.pubsub_topic_id
+}
+
+output "orchestrator_function_name" {
+  description = "Name of the orchestrator Cloud Function"
+  value       = module.serverless.function_name
+}
+
+output "orchestrator_function_uri" {
+  description = "Internal URI of the orchestrator Cloud Function"
+  value       = module.serverless.function_uri
+}
+
+output "webhook_base_url" {
+  description = "Public URL of the webhook remediation function"
+  value       = module.serverless.webhook_function_uri
+}
+
+output "approval_signing_secret" {
+  description = "Approval signing secret used by the orchestrator and webhook"
+  value       = local.resolved_approval_signing_secret
+  sensitive   = true
+}
+
 output "vm_external_ip" {
   description = "Public IP cua VM de SSH"
   value       = module.network.vm_external_ip

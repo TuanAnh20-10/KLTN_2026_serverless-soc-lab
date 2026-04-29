@@ -22,7 +22,7 @@ resource "google_bigquery_dataset" "soc_audit_dataset" {
   dataset_id                  = "soc_audit_dataset"
   location                    = var.region
   project                     = var.project_id
-  default_table_expiration_ms = 3600000 * 24 * 30 # 30 days
+  default_table_expiration_ms = 2147483647 # Provider schema rejects larger millisecond values
   delete_contents_on_destroy  = true
 }
 

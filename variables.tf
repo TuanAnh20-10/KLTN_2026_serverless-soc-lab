@@ -48,3 +48,33 @@ variable "scc_source_description" {
   type        = string
   default     = "Custom source for KLTN serverless SOC lab"
 }
+
+variable "gemini_api_key" {
+  description = "API Key for Gemini Model"
+  type        = string
+  sensitive   = true
+}
+
+variable "tele_bot_token" {
+  description = "Telegram Bot Token"
+  type        = string
+  sensitive   = true
+}
+
+variable "tele_chat_id" {
+  description = "Telegram Chat ID"
+  type        = string
+}
+
+variable "approval_signing_secret" {
+  description = "Optional fixed secret for webhook approval signing. Leave empty to auto-generate."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "approval_max_age_seconds" {
+  description = "Approval link expiration in seconds"
+  type        = number
+  default     = 3600
+}
