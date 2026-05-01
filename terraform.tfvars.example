@@ -6,6 +6,7 @@ ssh_source_cidr          = "x.x.x.x/32"
 victim_service_account_id = "victim-employee"
 soar_service_account_id   = "soar-orchestrator-sa"
 gemini_api_key            = "your-gemini-api-key"
+gemini_model              = "gemini-2.5-flash"
 tele_bot_token            = "your-telegram-bot-token"
 tele_chat_id              = "your-telegram-chat-id"
 # Optional: leave empty to let Terraform auto-generate it

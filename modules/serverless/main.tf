@@ -75,6 +75,20 @@ resource "google_cloud_run_service_iam_member" "webhook_public_invoker" {
   member   = "allUsers"
 }
 
+resource "google_cloud_run_service_iam_member" "orchestrator_trigger_invoker" {
+  location = google_cloudfunctions2_function.orchestrator_bot.location
+  service  = google_cloudfunctions2_function.orchestrator_bot.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.soar_sa_email}"
+}
+
+resource "google_cloud_run_service_iam_member" "orchestrator_public_invoker" {
+  location = google_cloudfunctions2_function.orchestrator_bot.location
+  service  = google_cloudfunctions2_function.orchestrator_bot.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 resource "google_cloudfunctions2_function" "orchestrator_bot" {
   name        = "orchestrator-bot"
   location    = var.region
@@ -101,6 +115,7 @@ resource "google_cloudfunctions2_function" "orchestrator_bot" {
       PROJECT_ID              = var.project_id
       PROJECT_NUMBER          = var.project_number
       GEMINI_API_KEY          = var.gemini_api_key
+      GEMINI_MODEL            = var.gemini_model
       TELE_BOT_TOKEN          = var.tele_bot_token
       TELE_CHAT_ID            = var.tele_chat_id
       SCC_SOURCE_ID           = var.scc_source_id

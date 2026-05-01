@@ -57,6 +57,7 @@ module "serverless" {
   organization_id          = var.organization_id
   pubsub_topic_id          = module.logging_data.pubsub_topic_id
   gemini_api_key           = var.gemini_api_key
+  gemini_model             = var.gemini_model
   tele_bot_token           = var.tele_bot_token
   tele_chat_id             = var.tele_chat_id
   approval_signing_secret  = local.resolved_approval_signing_secret

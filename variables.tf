@@ -55,6 +55,12 @@ variable "gemini_api_key" {
   sensitive   = true
 }
 
+variable "gemini_model" {
+  description = "Gemini model code for the orchestrator bot"
+  type        = string
+  default     = "gemini-2.5-flash"
+}
+
 variable "tele_bot_token" {
   description = "Telegram Bot Token"
   type        = string

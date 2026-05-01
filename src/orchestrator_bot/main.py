@@ -1,3 +1,4 @@
+import ast
 import base64
 import hashlib
 import hmac
@@ -19,7 +20,7 @@ logger.setLevel(logging.INFO)
 
 GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 TELEGRAM_API_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
-DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 load_dotenv()
 
@@ -36,28 +37,48 @@ def _load_repo_env() -> None:
 _load_repo_env()
 
 
-def _extract_pubsub_payload(cloud_event: Any) -> Dict[str, Any]:
-    """Extract and decode Pub/Sub payload from a CloudEvent."""
-    event_data = cloud_event.data if hasattr(cloud_event, "data") else cloud_event
+def _coerce_payload_object(decoded_text: str) -> Dict[str, Any]:
+    candidate = decoded_text.strip()
+    if not candidate:
+        raise ValueError("Decoded Pub/Sub message is empty")
+
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        # Some ad-hoc test publishers send Python-dict strings with single quotes.
+        parsed = ast.literal_eval(candidate)
+
+    if isinstance(parsed, str):
+        parsed = json.loads(parsed)
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Decoded Pub/Sub message must be a JSON object")
+
+    return parsed
+
+
+def _extract_pubsub_payload(event: Any) -> Dict[str, Any]:
+    """Extract and decode Pub/Sub payload from either CloudEvent or background event."""
+    event_data = event.data if hasattr(event, "data") else event
     if not isinstance(event_data, dict):
-        raise ValueError("CloudEvent data must be a dictionary")
+        raise ValueError("Pub/Sub event data must be a dictionary")
 
     message = event_data.get("message")
-    if not isinstance(message, dict):
-        raise ValueError("Missing 'message' object in CloudEvent data")
+    if isinstance(message, dict):
+        raw_data = message.get("data")
+    else:
+        raw_data = event_data.get("data")
 
-    raw_data = message.get("data")
     if not raw_data:
-        raise ValueError("Missing 'message.data' in CloudEvent data")
+        raise ValueError("Missing Pub/Sub message data")
+
+    if isinstance(raw_data, bytes):
+        decoded_text = raw_data.decode("utf-8")
+        return _coerce_payload_object(decoded_text)
 
     decoded_bytes = base64.b64decode(raw_data)
     decoded_text = decoded_bytes.decode("utf-8")
-    payload = json.loads(decoded_text)
-
-    if not isinstance(payload, dict):
-        raise ValueError("Decoded Pub/Sub message must be a JSON object")
-
-    return payload
+    return _coerce_payload_object(decoded_text)
 
 
 def _deep_find_first(obj: Any, keys: set[str]) -> Optional[str]:
@@ -269,10 +290,10 @@ def _send_telegram_alert(incident_id: str, triage: Dict[str, Any], approve_url: 
     response.raise_for_status()
 
 
-def main(cloud_event: Any) -> None:
+def main(event: Any, context: Any = None) -> None:
     """Cloud Function entrypoint: Pub/Sub -> Gemini triage -> Telegram alert."""
     try:
-        payload = _extract_pubsub_payload(cloud_event)
+        payload = _extract_pubsub_payload(event)
         triage_input = _normalize_for_triage(payload)
 
         model_output = _call_gemini_structured(triage_input)
