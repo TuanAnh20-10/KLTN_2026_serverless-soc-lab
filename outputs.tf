@@ -1,31 +1,26 @@
-output "vpc_id" {
-  description = "ID cua VPC"
-  value       = module.network.vpc_id
+output "honeypot_bucket_name" {
+  description = "Ten cua Bucket dung lam moi nhu"
+  value       = module.storage.bucket_name
 }
 
-output "subnet_id" {
-  description = "ID cua subnet"
-  value       = module.network.subnet_id
-}
-
-output "victim_employee_sa_email" {
-  description = "Email cua service account victim"
+output "victim_sa_email" {
+  description = "Email cua tai khoan Victim SA"
   value       = module.iam.victim_sa_email
 }
 
-output "soar_orchestrator_sa_email" {
-  description = "Email cua service account SOAR"
+output "soar_sa_email" {
+  description = "Email cua tai khoan SOAR Orchestrator SA"
   value       = module.iam.soar_sa_email
 }
 
-output "victim_sa_key" {
-  description = "Noi dung JSON key cua victim service account"
+output "victim_sa_json_key" {
+  description = "Noi dung JSON Key cua Victim (dung de hack)"
   value       = module.iam.victim_sa_key
   sensitive   = true
 }
 
-output "scc_source_id" {
-  description = "Numeric source ID cua SCC custom source"
+output "scc_custom_source_id" {
+  description = "ID cua Custom Source trong Security Command Center"
   value       = module.scc.source_id
 }
 
