@@ -4,9 +4,8 @@ variable "project_id" {
 }
 
 variable "project_number" {
-  description = "Number cua du an Google Cloud. Co the de trong de Terraform tu resolve."
+  description = "Number cua du an Google Cloud"
   type        = string
-  default     = ""
 }
 
 variable "organization_id" {
