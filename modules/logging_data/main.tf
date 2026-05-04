@@ -26,24 +26,7 @@ resource "google_bigquery_dataset" "soc_audit_dataset" {
   delete_contents_on_destroy  = true
 }
 
-# Log Router Sink 1: Real-time Alerting to Pub/Sub
-resource "google_logging_project_sink" "realtime_sink" {
-  name        = "soc-realtime-sink"
-  project     = var.project_id
-  destination = "pubsub.googleapis.com/projects/${var.project_id}/topics/${google_pubsub_topic.audit_logs_topic.name}"
 
-  filter = "resource.type=\"gcs_bucket\" AND logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\""
-
-  unique_writer_identity = true
-}
-
-# Grant the Sink 1 service account permission to publish to Pub/Sub
-resource "google_pubsub_topic_iam_member" "sink_pubsub_publisher" {
-  topic   = google_pubsub_topic.audit_logs_topic.name
-  project = var.project_id
-  role    = "roles/pubsub.publisher"
-  member  = google_logging_project_sink.realtime_sink.writer_identity
-}
 
 # Log Router Sink 2: Data Lake Storage to BigQuery
 resource "google_logging_project_sink" "datalake_sink" {

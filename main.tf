@@ -45,6 +45,13 @@ module "logging_data" {
   region     = var.region
 }
 
+module "storage" {
+  source          = "./modules/storage"
+  project_id      = var.project_id
+  region          = var.region
+  victim_sa_email = module.iam.victim_sa_email
+}
+
 module "serverless" {
   source = "./modules/serverless"
 
@@ -64,4 +71,11 @@ module "serverless" {
   approval_max_age_seconds = var.approval_max_age_seconds
   orchestrator_source_dir  = abspath("${path.root}/src/orchestrator_bot")
   webhook_source_dir       = abspath("${path.root}/src/webhook_remediation")
+}
+
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  project_id      = var.project_id
+  pubsub_topic_id = module.logging_data.pubsub_topic_id
 }

@@ -3,6 +3,11 @@ variable "project_id" {
   type        = string
 }
 
+variable "project_number" {
+  description = "Number cua du an Google Cloud"
+  type        = string
+}
+
 variable "organization_id" {
   description = "Organization ID dung cho Security Command Center"
   type        = string
