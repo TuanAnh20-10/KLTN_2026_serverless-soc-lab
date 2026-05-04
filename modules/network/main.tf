@@ -17,7 +17,8 @@ resource "google_compute_firewall" "allow_ssh" {
   name          = var.firewall_name
   project       = var.project_id
   network       = google_compute_network.vpc.name
-  source_ranges = [var.ssh_source_cidr]
+  # Allow Cloud IAP for web console SSH
+  source_ranges = ["35.235.240.0/20", var.ssh_source_cidr]
   target_tags   = var.vm_tags
 
   allow {

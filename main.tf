@@ -9,6 +9,7 @@ resource "random_password" "approval_signing_secret" {
 }
 
 locals {
+  resolved_project_number          = var.project_number != "" ? var.project_number : data.google_project.current.number
   resolved_approval_signing_secret = var.approval_signing_secret != "" ? var.approval_signing_secret : random_password.approval_signing_secret.result
 }
 
@@ -56,7 +57,7 @@ module "serverless" {
   source = "./modules/serverless"
 
   project_id               = var.project_id
-  project_number           = data.google_project.current.number
+  project_number           = local.resolved_project_number
   region                   = var.region
   soar_sa_email            = module.iam.soar_sa_email
   scc_source_id            = module.scc.source_id
