@@ -73,10 +73,3 @@ module "serverless" {
   orchestrator_source_dir  = abspath("${path.root}/src/orchestrator_bot")
   webhook_source_dir       = abspath("${path.root}/src/webhook_remediation")
 }
-
-module "monitoring" {
-  source = "./modules/monitoring"
-
-  project_id      = var.project_id
-  pubsub_topic_id = module.logging_data.pubsub_topic_id
-}
