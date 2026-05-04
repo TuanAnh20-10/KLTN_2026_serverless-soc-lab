@@ -13,7 +13,7 @@ resource "google_storage_bucket" "confidential_data" {
 
 # Upload 25 dummy files to simulate a real honeypot directory
 resource "google_storage_bucket_object" "dummy_files" {
-  count   = 25
+  count   = 55
   name    = "confidential_file_${count.index + 1}.txt"
   bucket  = google_storage_bucket.confidential_data.name
   content = "This is confidential file number ${count.index + 1}. Do not leak!"

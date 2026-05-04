@@ -46,7 +46,7 @@ resource "google_monitoring_alert_policy" "mass_download_alert" {
       duration   = "0s" # Không cần chờ thêm thời gian, vượt ngưỡng là báo ngay
       comparison = "COMPARISON_GT"
       
-      threshold_value = 20 # Ngưỡng 20 files để test
+      threshold_value = 50 # Ngưỡng 50 files để test
 
       aggregations {
         alignment_period     = "60s" # Cửa sổ 1 phút
