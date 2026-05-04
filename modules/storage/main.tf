@@ -11,12 +11,25 @@ resource "google_storage_bucket" "confidential_data" {
   force_destroy               = true
 }
 
-# Upload 25 dummy files to simulate a real honeypot directory
-resource "google_storage_bucket_object" "dummy_files" {
-  count   = 55
-  name    = "confidential_file_${count.index + 1}.txt"
-  bucket  = google_storage_bucket.confidential_data.name
-  content = "This is confidential file number ${count.index + 1}. Do not leak!"
+# Upload 55 dummy files via local-exec to prevent Terraform from tracking them in state
+resource "null_resource" "upload_dummy_files" {
+  triggers = {
+    bucket_id = google_storage_bucket.confidential_data.id
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-Command"]
+    command = <<EOT
+      $ErrorActionPreference = "Stop"
+      $tempDir = "temp_honeypot_${random_id.bucket_suffix.hex}"
+      New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+      1..55 | ForEach-Object {
+        "This is confidential file number $_. Do not leak!" | Out-File -FilePath "$tempDir\confidential_file_$_.txt" -Encoding ASCII
+      }
+      gsutil -m cp "$tempDir\*" "gs://${google_storage_bucket.confidential_data.name}/"
+      Remove-Item -Recurse -Force $tempDir
+    EOT
+  }
 }
 
 # Grant objectViewer role directly on the bucket to Victim SA
