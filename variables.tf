@@ -63,7 +63,7 @@ variable "gemini_api_key" {
 variable "gemini_model" {
   description = "Gemini model code for the orchestrator bot"
   type        = string
-  default     = "gemini-2.5-flash"
+  default     = "gemini-3-flash-preview"
 }
 
 variable "tele_bot_token" {
@@ -87,5 +87,5 @@ variable "approval_signing_secret" {
 variable "approval_max_age_seconds" {
   description = "Approval link expiration in seconds"
   type        = number
-  default     = 3600
+  default     = 1800
 }

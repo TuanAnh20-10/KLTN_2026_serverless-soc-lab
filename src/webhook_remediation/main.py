@@ -4,7 +4,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 from urllib.parse import quote
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 IAM_API_BASE = "https://iam.googleapis.com/v1"
+VN_TZ = timezone(timedelta(hours=7))
 
 load_dotenv()
 
@@ -65,6 +66,22 @@ def _verify_signature(incident_id: str, service_account_email: str, issued_at: s
 
     if not hmac.compare_digest(expected_sig, signature):
         raise PermissionError("Invalid signature")
+
+
+def _is_sa_already_disabled(project_id: str, service_account_email: str) -> bool:
+    """Check if a service account is already disabled (used as one-time-use guard)."""
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    authed_session = AuthorizedSession(credentials)
+
+    encoded_sa = quote(service_account_email, safe="")
+    url = f"{IAM_API_BASE}/projects/{project_id}/serviceAccounts/{encoded_sa}"
+    response = authed_session.get(url, timeout=15)
+
+    if response.status_code >= 400:
+        logger.warning("SA status check failed (%d): %s", response.status_code, response.text[:200])
+        return False
+
+    return response.json().get("disabled", False)
 
 
 def _disable_service_account(project_id: str, service_account_email: str) -> Dict:
@@ -360,10 +377,98 @@ def _build_html_response(
         <div class="value">{incident_id}</div>
       </div>
       <div class="meta-item">
-        <div class="label">Timestamp (UTC)</div>
-        <div class="value">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}</div>
+        <div class="label">Timestamp (UTC+7)</div>
+        <div class="value">{datetime.now(VN_TZ).strftime("%Y-%m-%d %H:%M:%S")}</div>
       </div>
     </div>
+  </div>
+</body>
+</html>"""
+
+
+def _build_already_used_html(incident_id: str, service_account_email: str) -> str:
+    """Build an HTML page indicating the approval link was already used."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Link Already Used</title>
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }}
+    .card {{
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: 16px; padding: 40px;
+      max-width: 580px; width: 100%; text-align: center;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+    }}
+    .icon {{ font-size: 48px; margin-bottom: 16px; }}
+    h1 {{ font-size: 22px; color: #fbbf24; margin-bottom: 8px; }}
+    .msg {{ font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 20px; }}
+    .detail {{ font-size: 12px; color: #64748b; word-break: break-all; }}
+    .detail span {{ color: #94a3b8; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">⚠️</div>
+    <h1>Approval Link Already Used</h1>
+    <div class="msg">
+      This remediation has already been executed.<br>
+      The service account was disabled by a previous approval.
+    </div>
+    <div class="detail">
+      Incident: <span>{incident_id}</span><br>
+      Service Account: <span>{service_account_email}</span><br>
+      Time: <span>{datetime.now(VN_TZ).strftime("%Y-%m-%d %H:%M:%S")} (UTC+7)</span>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def _build_expired_html(message: str) -> str:
+    """Build an HTML page for expired or invalid approval links."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Link Expired</title>
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }}
+    .card {{
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      border-radius: 16px; padding: 40px;
+      max-width: 480px; width: 100%; text-align: center;
+      box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+    }}
+    .icon {{ font-size: 48px; margin-bottom: 16px; }}
+    h1 {{ font-size: 22px; color: #ef4444; margin-bottom: 8px; }}
+    .msg {{ font-size: 14px; color: #94a3b8; line-height: 1.6; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🚫</div>
+    <h1>Link Expired or Invalid</h1>
+    <div class="msg">{message}</div>
   </div>
 </body>
 </html>"""
@@ -386,6 +491,16 @@ def main(request):
         project_id = os.getenv("PROJECT_ID", "").strip()
         if not project_id:
             raise ValueError("Missing PROJECT_ID environment variable")
+
+        # ── One-time-use guard ──────────────────────────────────────────
+        # If the SA is already disabled, this link was already used.
+        if _is_sa_already_disabled(project_id, service_account_email):
+            logger.info(
+                "Duplicate approval blocked: incident_id=%s sa=%s (already disabled)",
+                incident_id, service_account_email,
+            )
+            html = _build_already_used_html(incident_id, service_account_email)
+            return (html, 200, {"Content-Type": "text/html; charset=utf-8"})
 
         # Step 1: Disable the compromised service account (critical)
         remediation_result = _disable_service_account(project_id, service_account_email)
@@ -428,7 +543,8 @@ def main(request):
         return ({"status": "error", "message": str(exc)}, 400)
     except PermissionError as exc:
         logger.warning("Permission validation failed: %s", exc)
-        return ({"status": "error", "message": str(exc)}, 403)
+        html = _build_expired_html(str(exc))
+        return (html, 403, {"Content-Type": "text/html; charset=utf-8"})
     except Exception as exc:
         logger.exception("Webhook remediation failed: %s", exc)
         return ({"status": "error", "message": str(exc)}, 500)
