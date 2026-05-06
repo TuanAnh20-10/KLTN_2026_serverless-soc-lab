@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
 import requests
+from requests.exceptions import ReadTimeout
 from dotenv import load_dotenv
 
 
@@ -179,19 +180,32 @@ def _call_gemini_structured(triage_input: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     url = GEMINI_API_URL_TEMPLATE.format(model=model)
-    response = requests.post(
-        url,
-        params={"key": api_key},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json",
-            },
+    request_body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json",
         },
-        timeout=30,
-    )
-    response.raise_for_status()
+    }
+
+    # Retry once on timeout — gemini-2.5-flash (thinking model) can be slow
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.post(
+                url,
+                params={"key": api_key},
+                json=request_body,
+                timeout=55,
+            )
+            response.raise_for_status()
+            break
+        except ReadTimeout:
+            if attempt < max_attempts:
+                logger.warning("Gemini API timeout (attempt %d/%d), retrying...", attempt, max_attempts)
+            else:
+                logger.error("Gemini API timeout after %d attempts", max_attempts)
+                raise
     model_response = response.json()
 
     parts = (
@@ -294,6 +308,22 @@ def main(event: Any, context: Any = None) -> None:
     """Cloud Function entrypoint: Pub/Sub -> Gemini triage -> Telegram alert."""
     try:
         payload = _extract_pubsub_payload(event)
+
+        # ── Filter out "closed" incident notifications ──────────────────
+        # Cloud Monitoring sends two notifications per alert:
+        #   1. "open"   → metric exceeds threshold (action required)
+        #   2. "closed" → metric drops below threshold (already handled)
+        # We only process "open" incidents to avoid duplicate alerts.
+        incident = payload.get("incident", {})
+        incident_state = incident.get("state", "").lower()
+        if incident_state == "closed":
+            logger.info(
+                "Skipping closed incident (already remediated): policy=%s, ended_at=%s",
+                incident.get("policy_name", "unknown"),
+                incident.get("ended_at", "unknown"),
+            )
+            return
+
         triage_input = _normalize_for_triage(payload)
 
         model_output = _call_gemini_structured(triage_input)

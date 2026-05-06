@@ -111,7 +111,7 @@ resource "google_cloudfunctions2_function" "orchestrator_bot" {
   service_config {
     max_instance_count    = 1
     available_memory      = "256M"
-    timeout_seconds       = 60
+    timeout_seconds       = 120
     service_account_email = var.soar_sa_email
     environment_variables = {
       PROJECT_ID              = var.project_id
