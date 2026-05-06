@@ -59,11 +59,13 @@ resource "google_cloudfunctions2_function" "webhook_remediation" {
     service_account_email = var.soar_sa_email
     environment_variables = {
       PROJECT_ID               = var.project_id
+      PROJECT_NUMBER           = var.project_number
       SCC_SOURCE_NAME          = var.scc_source_name
       SCC_ORGANIZATION_ID      = var.organization_id
       SCC_SOURCE_ID            = var.scc_source_id
       APPROVAL_SIGNING_SECRET  = var.approval_signing_secret
       APPROVAL_MAX_AGE_SECONDS = tostring(var.approval_max_age_seconds)
+      HONEYPOT_BUCKET          = var.honeypot_bucket_name
     }
   }
 }

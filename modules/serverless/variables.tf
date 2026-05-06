@@ -80,3 +80,8 @@ variable "webhook_source_dir" {
   description = "Absolute path to the webhook remediation source directory"
   type        = string
 }
+
+variable "honeypot_bucket_name" {
+  description = "Name of the honeypot Cloud Storage bucket"
+  type        = string
+}
