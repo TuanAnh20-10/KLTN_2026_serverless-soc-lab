@@ -282,7 +282,7 @@ def _call_openai_fallback(triage_input: Dict[str, Any]) -> Dict[str, Any]:
     return _validate_triage_output(structured, triage_input)
 
 
-def _build_signed_approve_url(incident_id: str, service_account_email: str) -> str:
+def _build_signed_approve_url(incident_id: str, service_account_email: str, severity: str) -> str:
     webhook_base_url = os.getenv("WEBHOOK_BASE_URL")
     signing_secret = os.getenv("APPROVAL_SIGNING_SECRET")
     if not webhook_base_url:
@@ -291,7 +291,7 @@ def _build_signed_approve_url(incident_id: str, service_account_email: str) -> s
         raise ValueError("Missing APPROVAL_SIGNING_SECRET environment variable")
 
     issued_at = str(int(time.time()))
-    sign_payload = f"{incident_id}|{service_account_email}|{issued_at}"
+    sign_payload = f"{incident_id}|{service_account_email}|{severity}|{issued_at}"
     signature = hmac.new(
         signing_secret.encode("utf-8"),
         sign_payload.encode("utf-8"),
@@ -303,6 +303,7 @@ def _build_signed_approve_url(incident_id: str, service_account_email: str) -> s
             "action": "approve",
             "incident_id": incident_id,
             "service_account_email": service_account_email,
+            "severity": severity,
             "issued_at": issued_at,
             "sig": signature,
         }
@@ -391,6 +392,7 @@ def main(event: Any, context: Any = None) -> None:
         approve_url = _build_signed_approve_url(
             incident_id=incident_id,
             service_account_email=service_account_email,
+            severity=model_output.get("severity", "HIGH"),
         )
 
         _send_telegram_alert(incident_id=incident_id, triage=model_output, approve_url=approve_url)

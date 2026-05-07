@@ -44,7 +44,7 @@ def _require_query_arg(request, name: str) -> str:
     return value
 
 
-def _verify_signature(incident_id: str, service_account_email: str, issued_at: str, signature: str) -> None:
+def _verify_signature(incident_id: str, service_account_email: str, severity: str, issued_at: str, signature: str) -> None:
     signing_secret = os.getenv("APPROVAL_SIGNING_SECRET")
     if not signing_secret:
         raise ValueError("Missing APPROVAL_SIGNING_SECRET environment variable")
@@ -57,7 +57,7 @@ def _verify_signature(incident_id: str, service_account_email: str, issued_at: s
     if now - issued_ts > max_age_seconds:
         raise PermissionError("Approval link has expired")
 
-    payload = f"{incident_id}|{service_account_email}|{issued_at}"
+    payload = f"{incident_id}|{service_account_email}|{severity}|{issued_at}"
     expected_sig = hmac.new(
         signing_secret.encode("utf-8"),
         payload.encode("utf-8"),
@@ -132,6 +132,7 @@ def _write_scc_finding(
     service_account_email: str,
     project_id: str,
     remediation_result: Dict,
+    severity: str = "HIGH",
 ) -> str:
     """Create a rich SCC V2 finding documenting the data exfiltration incident and remediation."""
     client = securitycenter_v2.SecurityCenterClient()
@@ -149,7 +150,16 @@ def _write_scc_finding(
     finding = securitycenter_v2.Finding()
     finding.state = securitycenter_v2.Finding.State.ACTIVE
     finding.finding_class = securitycenter_v2.Finding.FindingClass.THREAT
-    finding.severity = securitycenter_v2.Finding.Severity.CRITICAL
+    # Map AI severity string to SCC severity enum
+    severity_map = {
+        "LOW": securitycenter_v2.Finding.Severity.LOW,
+        "MEDIUM": securitycenter_v2.Finding.Severity.MEDIUM,
+        "HIGH": securitycenter_v2.Finding.Severity.HIGH,
+        "CRITICAL": securitycenter_v2.Finding.Severity.CRITICAL,
+    }
+    finding.severity = severity_map.get(
+        severity.upper(), securitycenter_v2.Finding.Severity.HIGH
+    )
     finding.category = "DATA_EXFILTRATION_AUTO_REMEDIATED"
     finding.resource_name = (
         f"//cloudresourcemanager.googleapis.com/projects/{project_num}"
@@ -483,10 +493,11 @@ def main(request):
 
         incident_id = _require_query_arg(request, "incident_id")
         service_account_email = _require_query_arg(request, "service_account_email")
+        severity = request.args.get("severity", "HIGH").strip().upper()
         issued_at = _require_query_arg(request, "issued_at")
         signature = _require_query_arg(request, "sig")
 
-        _verify_signature(incident_id, service_account_email, issued_at, signature)
+        _verify_signature(incident_id, service_account_email, severity, issued_at, signature)
 
         project_id = os.getenv("PROJECT_ID", "").strip()
         if not project_id:
@@ -511,6 +522,7 @@ def main(request):
             service_account_email=service_account_email,
             project_id=project_id,
             remediation_result=remediation_result,
+            severity=severity,
         )
 
         # Step 3: Always log the remediation record to Cloud Logging
