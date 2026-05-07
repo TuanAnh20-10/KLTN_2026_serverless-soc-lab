@@ -89,3 +89,9 @@ variable "approval_max_age_seconds" {
   type        = number
   default     = 1800
 }
+
+variable "openai_api_key" {
+  description = "OpenAI API Key for GPT-5.4 Mini fallback"
+  type        = string
+  sensitive   = true
+}

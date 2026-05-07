@@ -123,6 +123,7 @@ resource "google_cloudfunctions2_function" "orchestrator_bot" {
       SCC_SOURCE_ID           = var.scc_source_id
       WEBHOOK_BASE_URL        = google_cloudfunctions2_function.webhook_remediation.service_config[0].uri
       APPROVAL_SIGNING_SECRET = var.approval_signing_secret
+      OPENAI_API_KEY          = var.openai_api_key
     }
   }
 
