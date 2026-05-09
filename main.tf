@@ -70,6 +70,8 @@ module "serverless" {
   tele_chat_id             = var.tele_chat_id
   approval_signing_secret  = local.resolved_approval_signing_secret
   approval_max_age_seconds = var.approval_max_age_seconds
+  honeypot_bucket_name     = module.storage.bucket_name
+  openai_api_key           = var.openai_api_key
   orchestrator_source_dir  = abspath("${path.root}/src/orchestrator_bot")
   webhook_source_dir       = abspath("${path.root}/src/webhook_remediation")
 }

@@ -80,3 +80,14 @@ variable "webhook_source_dir" {
   description = "Absolute path to the webhook remediation source directory"
   type        = string
 }
+
+variable "honeypot_bucket_name" {
+  description = "Name of the honeypot Cloud Storage bucket"
+  type        = string
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API Key for GPT-5.4 Mini fallback"
+  type        = string
+  sensitive   = true
+}

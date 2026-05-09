@@ -63,7 +63,10 @@ variable "gemini_api_key" {
 variable "gemini_model" {
   description = "Gemini model code for the orchestrator bot"
   type        = string
-  default     = "gemini-2.5-flash"
+  default     = "gemini-3-flash-preview"
+  #default     = "gemini-2.5-flash"
+  #default     = "gemini-2.5-flash-lite"
+  #default     = "gemini-3.1-flash-lite-preview"
 }
 
 variable "tele_bot_token" {
@@ -87,5 +90,11 @@ variable "approval_signing_secret" {
 variable "approval_max_age_seconds" {
   description = "Approval link expiration in seconds"
   type        = number
-  default     = 3600
+  default     = 1800
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API Key for GPT-5.4 Mini fallback"
+  type        = string
+  sensitive   = true
 }
