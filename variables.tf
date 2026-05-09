@@ -65,6 +65,8 @@ variable "gemini_model" {
   type        = string
   default     = "gemini-3-flash-preview"
   #default     = "gemini-2.5-flash"
+  #default     = "gemini-2.5-flash-lite"
+  #default     = "gemini-3.1-flash-lite-preview"
 }
 
 variable "tele_bot_token" {

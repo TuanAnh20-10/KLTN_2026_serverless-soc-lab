@@ -221,7 +221,7 @@ def _call_gemini_structured(triage_input: Dict[str, Any]) -> Dict[str, Any]:
                 url,
                 params={"key": api_key},
                 json=request_body,
-                timeout=55,
+                timeout=30,
             )
             response.raise_for_status()
             break
