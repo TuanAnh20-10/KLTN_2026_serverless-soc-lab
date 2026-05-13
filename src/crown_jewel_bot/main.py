@@ -158,10 +158,12 @@ def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 def _build_triage_prompt(triage_input: Dict[str, Any]) -> str:
-    """Build the SOC triage prompt (shared by all AI providers)."""
+    """Build the SOC triage prompt for Crown Jewel real-time analysis."""
     return (
-        "You are a SOC triage assistant for a GCP security pipeline "
-        "that monitors a honeypot bucket to detect insider threats. "
+        "You are a SOC triage assistant for a GCP security pipeline. "
+        "This is a REAL-TIME CROWN JEWEL ACCESS EVENT — the accessed resource "
+        "is classified as a top-priority asset (e.g., master keys, M&A documents, root credentials). "
+        "Any unauthorized access must be treated as CRITICAL. "
         "Analyze this GCP audit event and return ONLY valid JSON "
         "with this exact schema: "
         "{"
@@ -321,7 +323,7 @@ def _send_telegram_alert(incident_id: str, triage: Dict[str, Any], approve_url: 
         raise ValueError("Missing TELE_CHAT_ID environment variable")
 
     message_text = (
-        "[SOC Alert] Suspicious IAM Activity\n"
+        "\U0001f6a8 [CRITICAL ALERT] Crown Jewel Access Detected!\n"
         f"Incident ID: {incident_id}\n"
         f"Severity: {triage.get('severity')}\n"
         f"Confidence: {triage.get('confidence')}\n"
@@ -336,7 +338,9 @@ def _send_telegram_alert(incident_id: str, triage: Dict[str, Any], approve_url: 
         "chat_id": chat_id,
         "text": message_text,
         "reply_markup": {
-            "inline_keyboard": [[{"text": "Approve Remediation", "url": approve_url}]]
+            "inline_keyboard": [
+                [{"text": "\u26a0\ufe0f Approve Remediation", "url": approve_url}]
+            ]
         },
     }
 
@@ -346,34 +350,24 @@ def _send_telegram_alert(incident_id: str, triage: Dict[str, Any], approve_url: 
 
 
 def main(event: Any, context: Any = None) -> None:
-    """Cloud Function entrypoint: Pub/Sub -> AI triage (Gemini + OpenAI fallback) -> Telegram alert."""
+    """Cloud Function entrypoint: Crown Jewel Pub/Sub -> AI triage -> Telegram alert.
+
+    Unlike the orchestrator_bot which is triggered by Cloud Monitoring alerts
+    (with ~4min delay), this function is triggered DIRECTLY by a Log Sink
+    for real-time response to crown jewel access events.
+    No incident state filtering is needed — every access is an alert.
+    """
     try:
         payload = _extract_pubsub_payload(event)
-
-        # ── Filter out "closed" incident notifications ──────────────────
-        # Cloud Monitoring sends two notifications per alert:
-        #   1. "open"   → metric exceeds threshold (action required)
-        #   2. "closed" → metric drops below threshold (already handled)
-        # We only process "open" incidents to avoid duplicate alerts.
-        incident = payload.get("incident", {})
-        incident_state = incident.get("state", "").lower()
-        if incident_state == "closed":
-            logger.info(
-                "Skipping closed incident (already remediated): policy=%s, ended_at=%s",
-                incident.get("policy_name", "unknown"),
-                incident.get("ended_at", "unknown"),
-            )
-            return
-
         triage_input = _normalize_for_triage(payload)
 
         # ── AI Triage with fallback ──────────────────────────────────
-        # Primary:  Gemini 2.5 Flash (Google)
+        # Primary:  Gemini (Google)
         # Fallback: GPT-5.4 Mini (OpenAI) — if Gemini fails
         ai_provider = "gemini"
         try:
             model_output = _call_gemini_structured(triage_input)
-            logger.info("AI triage completed via Gemini")
+            logger.info("Crown Jewel AI triage completed via Gemini")
         except Exception as gemini_exc:
             logger.warning(
                 "Gemini failed (%s), switching to OpenAI fallback...",
@@ -381,7 +375,7 @@ def main(event: Any, context: Any = None) -> None:
             )
             ai_provider = "openai-gpt-5.4-mini"
             model_output = _call_openai_fallback(triage_input)
-            logger.info("AI triage completed via OpenAI fallback (GPT-5.4 Mini)")
+            logger.info("Crown Jewel AI triage completed via OpenAI fallback (GPT-5.4 Mini)")
 
         incident_id = uuid.uuid4().hex[:16]
         service_account_email = _normalize_service_account_email(
@@ -393,19 +387,19 @@ def main(event: Any, context: Any = None) -> None:
         approve_url = _build_signed_approve_url(
             incident_id=incident_id,
             service_account_email=service_account_email,
-            severity=model_output.get("severity", "HIGH"),
-            pipeline="bulk_download",
+            severity=model_output.get("severity", "CRITICAL"),
+            pipeline="crown_jewel",
         )
 
         _send_telegram_alert(incident_id=incident_id, triage=model_output, approve_url=approve_url)
 
         logger.info(
-            "Processed incident_id=%s severity=%s should_escalate=%s ai_provider=%s",
+            "Crown Jewel incident_id=%s severity=%s should_escalate=%s ai_provider=%s",
             incident_id,
             model_output.get("severity"),
             model_output.get("should_escalate"),
             ai_provider,
         )
     except Exception as exc:
-        logger.exception("Failed to process Pub/Sub event: %s", exc)
+        logger.exception("Failed to process Crown Jewel Pub/Sub event: %s", exc)
         raise

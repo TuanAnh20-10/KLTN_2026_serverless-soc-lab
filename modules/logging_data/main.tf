@@ -45,3 +45,28 @@ resource "google_project_iam_member" "sink_bq_editor" {
   role    = "roles/bigquery.dataEditor"
   member  = google_logging_project_sink.datalake_sink.writer_identity
 }
+
+# ── CROWN JEWELS REAL-TIME PIPELINE ─────────────────────────────────────
+
+resource "google_pubsub_topic" "crown_jewels_topic" {
+  name    = "crown-jewels-realtime-topic"
+  project = var.project_id
+}
+
+resource "google_logging_project_sink" "crown_jewels_sink" {
+  name        = "crown-jewels-realtime-sink"
+  project     = var.project_id
+  destination = "pubsub.googleapis.com/projects/${var.project_id}/topics/${google_pubsub_topic.crown_jewels_topic.name}"
+
+  # Only capture storage.objects.get on the crown jewel bucket
+  filter = "resource.type=\"gcs_bucket\" AND logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\" AND resource.labels.bucket_name=\"${var.crown_jewel_bucket_name}\""
+
+  unique_writer_identity = true
+}
+
+resource "google_pubsub_topic_iam_member" "crown_jewels_sink_publisher" {
+  topic   = google_pubsub_topic.crown_jewels_topic.name
+  project = var.project_id
+  role    = "roles/pubsub.publisher"
+  member  = google_logging_project_sink.crown_jewels_sink.writer_identity
+}

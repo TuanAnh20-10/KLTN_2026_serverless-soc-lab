@@ -42,8 +42,9 @@ module "scc" {
 module "logging_data" {
   source = "./modules/logging_data"
 
-  project_id = var.project_id
-  region     = var.region
+  project_id              = var.project_id
+  region                  = var.region
+  crown_jewel_bucket_name = module.storage.crown_jewel_bucket_name
 }
 
 module "storage" {
@@ -74,6 +75,9 @@ module "serverless" {
   openai_api_key           = var.openai_api_key
   orchestrator_source_dir  = abspath("${path.root}/src/orchestrator_bot")
   webhook_source_dir       = abspath("${path.root}/src/webhook_remediation")
+  crown_jewel_source_dir   = abspath("${path.root}/src/crown_jewel_bot")
+  crown_jewels_topic_id    = module.logging_data.crown_jewels_topic_id
+  crown_jewel_bucket_name  = module.storage.crown_jewel_bucket_name
 }
 
 module "monitoring" {

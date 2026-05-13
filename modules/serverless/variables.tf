@@ -91,3 +91,18 @@ variable "openai_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "crown_jewels_topic_id" {
+  description = "The Pub/Sub Topic ID that triggers the Crown Jewel Bot"
+  type        = string
+}
+
+variable "crown_jewel_source_dir" {
+  description = "Absolute path to the crown jewel bot source directory"
+  type        = string
+}
+
+variable "crown_jewel_bucket_name" {
+  description = "Name of the crown jewel Cloud Storage bucket"
+  type        = string
+}

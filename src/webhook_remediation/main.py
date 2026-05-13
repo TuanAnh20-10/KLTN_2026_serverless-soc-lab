@@ -44,7 +44,7 @@ def _require_query_arg(request, name: str) -> str:
     return value
 
 
-def _verify_signature(incident_id: str, service_account_email: str, severity: str, issued_at: str, signature: str) -> None:
+def _verify_signature(incident_id: str, service_account_email: str, severity: str, pipeline: str, issued_at: str, signature: str) -> None:
     signing_secret = os.getenv("APPROVAL_SIGNING_SECRET")
     if not signing_secret:
         raise ValueError("Missing APPROVAL_SIGNING_SECRET environment variable")
@@ -57,7 +57,7 @@ def _verify_signature(incident_id: str, service_account_email: str, severity: st
     if now - issued_ts > max_age_seconds:
         raise PermissionError("Approval link has expired")
 
-    payload = f"{incident_id}|{service_account_email}|{severity}|{issued_at}"
+    payload = f"{incident_id}|{service_account_email}|{severity}|{pipeline}|{issued_at}"
     expected_sig = hmac.new(
         signing_secret.encode("utf-8"),
         payload.encode("utf-8"),
@@ -127,14 +127,30 @@ def _resolve_scc_parent() -> str:
     return source_name
 
 
+def _is_crown_jewel_incident(pipeline: str) -> bool:
+    """Determine if this incident originates from the Crown Jewel real-time pipeline.
+
+    Uses the explicit `pipeline` query parameter set by the originating bot,
+    not AI severity output, to ensure deterministic classification.
+    """
+    return pipeline.lower() == "crown_jewel"
+
+
 def _write_scc_finding(
     incident_id: str,
     service_account_email: str,
     project_id: str,
     remediation_result: Dict,
     severity: str = "HIGH",
+    pipeline: str = "bulk_download",
 ) -> str:
-    """Create a rich SCC V2 finding documenting the data exfiltration incident and remediation."""
+    """Create a rich SCC V2 finding documenting the incident and remediation.
+
+    Uses the explicit `pipeline` parameter (set by the originating bot)
+    to determine context-appropriate content:
+    - pipeline='crown_jewel'   → Crown Jewel real-time pipeline
+    - pipeline='bulk_download' → Bulk download (mass exfiltration) pipeline
+    """
     client = securitycenter_v2.SecurityCenterClient()
     parent = _resolve_scc_parent()
 
@@ -145,6 +161,8 @@ def _write_scc_finding(
     now = datetime.now(timezone.utc)
     event_time = timestamp_pb2.Timestamp()
     event_time.FromDatetime(now)
+
+    is_crown_jewel = _is_crown_jewel_incident(pipeline)
 
     # ── Build the enriched Finding ──────────────────────────────────────
     finding = securitycenter_v2.Finding()
@@ -160,66 +178,126 @@ def _write_scc_finding(
     finding.severity = severity_map.get(
         severity.upper(), securitycenter_v2.Finding.Severity.HIGH
     )
-    finding.category = "DATA_EXFILTRATION_AUTO_REMEDIATED"
     finding.resource_name = (
         f"//cloudresourcemanager.googleapis.com/projects/{project_num}"
     )
     finding.event_time = event_time
 
-    # ── Description ─────────────────────────────────────────────────────
-    finding.description = (
-        f"[SOC Automated Response] Mass data exfiltration detected and remediated.\n\n"
-        f"Incident ID: {incident_id}\n"
-        f"Compromised Service Account: {service_account_email}\n"
-        f"Project: {project_id} ({project_num})\n\n"
-        f"A compromised service account key was used to download a large number of "
-        f"files from Cloud Storage in a short period, triggering an alert policy. "
-        f"The SOC orchestrator analyzed the activity via Gemini AI and sent an "
-        f"approval request to the admin via Telegram. Upon admin approval, the "
-        f"SOAR webhook automatically disabled the service account to stop the "
-        f"data exfiltration."
-    )
+    if is_crown_jewel:
+        # ── Crown Jewel Real-time Pipeline ──────────────────────────────
+        finding.category = "CROWN_JEWEL_ACCESS_AUTO_REMEDIATED"
 
-    # ── Next Steps ──────────────────────────────────────────────────────
-    finding.next_steps = (
-        "1. Rotate all keys for the compromised service account.\n"
-        "2. Review Cloud Audit Logs to identify all accessed objects.\n"
-        "3. Assess the sensitivity of exfiltrated data.\n"
-        "4. Check if the compromised key was exposed in any repository or log.\n"
-        "5. Re-enable the service account only after the investigation is complete."
-    )
+        finding.description = (
+            f"[SOC Real-time Response] Crown Jewel access detected and remediated.\n\n"
+            f"Incident ID: {incident_id}\n"
+            f"Compromised Service Account: {service_account_email}\n"
+            f"Project: {project_id} ({project_num})\n\n"
+            f"A compromised service account key was used to access a top-priority "
+            f"asset (Crown Jewel) in Cloud Storage. The real-time Log Sink pipeline "
+            f"detected the access within seconds and triggered the Crown Jewel Bot, "
+            f"which analyzed the event via AI and sent an immediate approval request "
+            f"to the admin via Telegram. Upon admin approval, the SOAR webhook "
+            f"automatically disabled the service account to prevent further access."
+        )
 
-    # ── MITRE ATT&CK Mapping ───────────────────────────────────────────
-    finding.mitre_attack = securitycenter_v2.MitreAttack(
-        primary_tactic=securitycenter_v2.MitreAttack.Tactic.EXFILTRATION,
-        primary_techniques=[
-            securitycenter_v2.MitreAttack.Technique.AUTOMATED_EXFILTRATION,
-        ],
-        additional_tactics=[
-            securitycenter_v2.MitreAttack.Tactic.CREDENTIAL_ACCESS,
-        ],
-        additional_techniques=[
-            securitycenter_v2.MitreAttack.Technique.STEAL_APPLICATION_ACCESS_TOKEN,
-            securitycenter_v2.MitreAttack.Technique.VALID_ACCOUNTS,
-        ],
-    )
+        finding.next_steps = (
+            "1. Immediately rotate all keys for the compromised service account.\n"
+            "2. Assess which crown jewel files were accessed and their sensitivity.\n"
+            "3. Determine if accessed data (keys, credentials, M&A docs) has been leaked.\n"
+            "4. Activate incident response plan for crown jewel compromise.\n"
+            "5. Review access policies and consider tightening IAM controls on crown jewel buckets.\n"
+            "6. Re-enable the service account only after full forensic investigation."
+        )
 
-    # ── Access Info (compromised identity) ──────────────────────────────
+        # MITRE ATT&CK: Collection + Exfiltration of sensitive data
+        finding.mitre_attack = securitycenter_v2.MitreAttack(
+            primary_tactic=securitycenter_v2.MitreAttack.Tactic.COLLECTION,
+            primary_techniques=[
+                securitycenter_v2.MitreAttack.Technique.DATA_FROM_CLOUD_STORAGE,
+            ],
+            additional_tactics=[
+                securitycenter_v2.MitreAttack.Tactic.CREDENTIAL_ACCESS,
+                securitycenter_v2.MitreAttack.Tactic.EXFILTRATION,
+            ],
+            additional_techniques=[
+                securitycenter_v2.MitreAttack.Technique.STEAL_APPLICATION_ACCESS_TOKEN,
+                securitycenter_v2.MitreAttack.Technique.VALID_ACCOUNTS,
+            ],
+        )
+
+        # Exfiltration source: Crown Jewel bucket
+        crown_jewel_bucket = os.getenv(
+            "CROWN_JEWEL_BUCKET",
+            "secops-lab-crown-jewels",
+        )
+        finding.exfiltration = securitycenter_v2.Exfiltration(
+            sources=[
+                securitycenter_v2.ExfilResource(
+                    name=f"//storage.googleapis.com/projects/_/buckets/{crown_jewel_bucket}",
+                    components=["STORAGE_OBJECTS"],
+                )
+            ],
+        )
+
+        pipeline_type = "CROWN_JEWEL_REALTIME"
+    else:
+        # ── Bulk Download (Mass Exfiltration) Pipeline ──────────────────
+        finding.category = "DATA_EXFILTRATION_AUTO_REMEDIATED"
+
+        finding.description = (
+            f"[SOC Automated Response] Mass data exfiltration detected and remediated.\n\n"
+            f"Incident ID: {incident_id}\n"
+            f"Compromised Service Account: {service_account_email}\n"
+            f"Project: {project_id} ({project_num})\n\n"
+            f"A compromised service account key was used to download a large number of "
+            f"files from Cloud Storage in a short period, triggering an alert policy. "
+            f"The SOC orchestrator analyzed the activity via Gemini AI and sent an "
+            f"approval request to the admin via Telegram. Upon admin approval, the "
+            f"SOAR webhook automatically disabled the service account to stop the "
+            f"data exfiltration."
+        )
+
+        finding.next_steps = (
+            "1. Rotate all keys for the compromised service account.\n"
+            "2. Review Cloud Audit Logs to identify all accessed objects.\n"
+            "3. Assess the sensitivity of exfiltrated data.\n"
+            "4. Check if the compromised key was exposed in any repository or log.\n"
+            "5. Re-enable the service account only after the investigation is complete."
+        )
+
+        # MITRE ATT&CK: Automated exfiltration
+        finding.mitre_attack = securitycenter_v2.MitreAttack(
+            primary_tactic=securitycenter_v2.MitreAttack.Tactic.EXFILTRATION,
+            primary_techniques=[
+                securitycenter_v2.MitreAttack.Technique.AUTOMATED_EXFILTRATION,
+            ],
+            additional_tactics=[
+                securitycenter_v2.MitreAttack.Tactic.CREDENTIAL_ACCESS,
+            ],
+            additional_techniques=[
+                securitycenter_v2.MitreAttack.Technique.STEAL_APPLICATION_ACCESS_TOKEN,
+                securitycenter_v2.MitreAttack.Technique.VALID_ACCOUNTS,
+            ],
+        )
+
+        # Exfiltration source: Honeypot bucket
+        finding.exfiltration = securitycenter_v2.Exfiltration(
+            sources=[
+                securitycenter_v2.ExfilResource(
+                    name=f"//storage.googleapis.com/projects/_/buckets/{os.getenv('HONEYPOT_BUCKET', 'secops-lab-confidential-data')}",
+                    components=["STORAGE_OBJECTS"],
+                )
+            ],
+        )
+
+        pipeline_type = "BULK_DOWNLOAD_MONITORING"
+
+    # ── Access Info (compromised identity) — shared by both pipelines ───
     finding.access = securitycenter_v2.Access(
         principal_email=service_account_email,
         service_name="storage.googleapis.com",
         method_name="google.storage.objects.get",
         principal_subject=f"serviceAccount:{service_account_email}",
-    )
-
-    # ── Exfiltration Details ────────────────────────────────────────────
-    finding.exfiltration = securitycenter_v2.Exfiltration(
-        sources=[
-            securitycenter_v2.ExfilResource(
-                name=f"//storage.googleapis.com/projects/_/buckets/{os.getenv('HONEYPOT_BUCKET', 'secops-lab-confidential-data')}",
-                components=["STORAGE_OBJECTS"],
-            )
-        ],
     )
 
     # ── Source Properties (custom metadata) ─────────────────────────────
@@ -230,14 +308,15 @@ def _write_scc_finding(
         "remediation_status": "COMPLETED",
         "remediation_method": "SOAR_AUTOMATED_WEBHOOK",
         "approval_method": "HUMAN_IN_THE_LOOP_TELEGRAM",
+        "pipeline_type": pipeline_type,
         "project_id": project_id,
     }
 
     finding_id = f"f{uuid.uuid4().hex[:31]}"
 
     logger.info(
-        "SCC create_finding request: parent=%s, finding_id=%s, category=%s",
-        parent, finding_id, finding.category,
+        "SCC create_finding request: parent=%s, finding_id=%s, category=%s, pipeline=%s",
+        parent, finding_id, finding.category, pipeline_type,
     )
 
     request = securitycenter_v2.CreateFindingRequest(
@@ -494,10 +573,11 @@ def main(request):
         incident_id = _require_query_arg(request, "incident_id")
         service_account_email = _require_query_arg(request, "service_account_email")
         severity = request.args.get("severity", "HIGH").strip().upper()
+        pipeline = request.args.get("pipeline", "bulk_download").strip().lower()
         issued_at = _require_query_arg(request, "issued_at")
         signature = _require_query_arg(request, "sig")
 
-        _verify_signature(incident_id, service_account_email, severity, issued_at, signature)
+        _verify_signature(incident_id, service_account_email, severity, pipeline, issued_at, signature)
 
         project_id = os.getenv("PROJECT_ID", "").strip()
         if not project_id:
@@ -523,6 +603,7 @@ def main(request):
             project_id=project_id,
             remediation_result=remediation_result,
             severity=severity,
+            pipeline=pipeline,
         )
 
         # Step 3: Always log the remediation record to Cloud Logging
