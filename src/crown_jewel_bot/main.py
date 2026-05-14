@@ -25,6 +25,15 @@ OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 TELEGRAM_API_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
+# ── Deduplication Cache ──────────────────────────────────────────────────
+# GCS generates 2x storage.objects.get logs per download (metadata + data),
+# typically within 1-2 seconds of each other.
+# This in-memory cache suppresses the duplicate log for the SAME file only.
+# Different files always produce separate alerts (dedup key includes file path).
+# Window kept short (10s) so re-access of the same file is still alerted.
+DEDUP_WINDOW_SECONDS = 10
+_recent_events: Dict[str, float] = {}
+
 load_dotenv()
 
 
@@ -360,6 +369,26 @@ def main(event: Any, context: Any = None) -> None:
     try:
         payload = _extract_pubsub_payload(event)
         triage_input = _normalize_for_triage(payload)
+
+        # ── Deduplication ────────────────────────────────────────────
+        # GCS emits 2 audit logs per download (metadata GET + data GET).
+        # Deduplicate by (service_account + resource_name) within 10s.
+        # Different files = different dedup keys = separate alerts.
+        dedup_key = f"{triage_input.get('service_account_email')}|{triage_input.get('resource_name')}"
+        now = time.time()
+
+        # Purge expired entries
+        expired = [k for k, ts in _recent_events.items() if now - ts > DEDUP_WINDOW_SECONDS]
+        for k in expired:
+            del _recent_events[k]
+
+        if dedup_key in _recent_events:
+            logger.info(
+                "Duplicate crown jewel event suppressed (within %ds window): %s",
+                DEDUP_WINDOW_SECONDS, dedup_key,
+            )
+            return
+        _recent_events[dedup_key] = now
 
         # ── AI Triage with fallback ──────────────────────────────────
         # Primary:  Gemini (Google)

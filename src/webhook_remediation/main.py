@@ -213,7 +213,7 @@ def _write_scc_finding(
         finding.mitre_attack = securitycenter_v2.MitreAttack(
             primary_tactic=securitycenter_v2.MitreAttack.Tactic.COLLECTION,
             primary_techniques=[
-                securitycenter_v2.MitreAttack.Technique.DATA_FROM_CLOUD_STORAGE,
+                securitycenter_v2.MitreAttack.Technique.AUTOMATED_COLLECTION,
             ],
             additional_tactics=[
                 securitycenter_v2.MitreAttack.Tactic.CREDENTIAL_ACCESS,
