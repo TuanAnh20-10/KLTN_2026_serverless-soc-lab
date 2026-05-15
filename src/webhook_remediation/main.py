@@ -16,8 +16,12 @@ from google.protobuf import timestamp_pb2
 from dotenv import load_dotenv
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 IAM_API_BASE = "https://iam.googleapis.com/v1"
 VN_TZ = timezone(timedelta(hours=7))
@@ -487,6 +491,7 @@ def _build_expired_html(message: str) -> str:
 def main(request):
     """HTTP webhook entrypoint: approve -> disable IAM -> push SCC finding."""
     try:
+        logger.info("[Step 1/5] Received HTTP webhook request — extracting query params...")
         action = _require_query_arg(request, "action")
         if action != "approve":
             return ({"status": "ignored", "reason": "unsupported action"}, 400)
@@ -496,27 +501,36 @@ def main(request):
         severity = request.args.get("severity", "HIGH").strip().upper()
         issued_at = _require_query_arg(request, "issued_at")
         signature = _require_query_arg(request, "sig")
+        logger.info(
+            "[Step 1/5] Params: incident_id=%s, sa=%s, severity=%s",
+            incident_id, service_account_email, severity,
+        )
 
+        logger.info("[Step 2/5] Verifying HMAC-SHA256 signature & link expiry (max 3600s)...")
         _verify_signature(incident_id, service_account_email, severity, issued_at, signature)
+        logger.info("[Step 2/5] Signature valid — link is authentic and not expired")
 
         project_id = os.getenv("PROJECT_ID", "").strip()
         if not project_id:
             raise ValueError("Missing PROJECT_ID environment variable")
 
         # ── One-time-use guard ──────────────────────────────────────────
-        # If the SA is already disabled, this link was already used.
+        logger.info("[Step 2/5] Checking one-time-use guard — is SA already disabled?")
         if _is_sa_already_disabled(project_id, service_account_email):
             logger.info(
-                "Duplicate approval blocked: incident_id=%s sa=%s (already disabled)",
+                "[Step 2/5] BLOCKED: SA already disabled (link already used) — incident_id=%s, sa=%s",
                 incident_id, service_account_email,
             )
             html = _build_already_used_html(incident_id, service_account_email)
             return (html, 200, {"Content-Type": "text/html; charset=utf-8"})
 
-        # Step 1: Disable the compromised service account (critical)
+        # Step 3: Disable the compromised service account
+        logger.info("[Step 3/5] Disabling service account via IAM API: %s", service_account_email)
         remediation_result = _disable_service_account(project_id, service_account_email)
+        logger.info("[Step 3/5] Service account DISABLED successfully")
 
-        # Step 2: Write SCC finding (best-effort, non-blocking)
+        # Step 4: Write SCC finding
+        logger.info("[Step 4/5] Creating SCC Finding (Class: THREAT, Severity: %s)...", severity)
         finding_name = _write_scc_finding(
             incident_id=incident_id,
             service_account_email=service_account_email,
@@ -524,8 +538,10 @@ def main(request):
             remediation_result=remediation_result,
             severity=severity,
         )
+        logger.info("[Step 4/5] SCC Finding created: %s", finding_name or "FAILED")
 
-        # Step 3: Always log the remediation record to Cloud Logging
+        # Step 5: Write audit log
+        logger.info("[Step 5/5] Writing remediation audit log to Cloud Logging...")
         _log_remediation_record(
             incident_id=incident_id,
             service_account_email=service_account_email,
@@ -533,12 +549,11 @@ def main(request):
             remediation_result=remediation_result,
             finding_name=finding_name,
         )
+        logger.info("[Step 5/5] Audit log written")
 
         logger.info(
-            "Remediation complete: incident_id=%s sa=%s sa_disabled=True scc_finding=%s",
-            incident_id,
-            service_account_email,
-            finding_name or "FAILED",
+            "[DONE] Remediation complete: incident_id=%s | sa=%s | sa_disabled=True | scc_finding=%s",
+            incident_id, service_account_email, finding_name or "FAILED",
         )
 
         # Return a rich HTML page showing results
@@ -551,13 +566,14 @@ def main(request):
         return (html, 200, {"Content-Type": "text/html; charset=utf-8"})
 
     except ValueError as exc:
-        logger.warning("Invalid webhook request: %s", exc)
+        logger.warning("[ERROR] Invalid webhook request: %s", exc)
         return ({"status": "error", "message": str(exc)}, 400)
     except PermissionError as exc:
-        logger.warning("Permission validation failed: %s", exc)
+        logger.warning("[ERROR] Permission validation failed: %s", exc)
         html = _build_expired_html(str(exc))
         return (html, 403, {"Content-Type": "text/html; charset=utf-8"})
     except Exception as exc:
-        logger.exception("Webhook remediation failed: %s", exc)
+        logger.exception("[ERROR] Webhook remediation failed: %s", exc)
         return ({"status": "error", "message": str(exc)}, 500)
+
 

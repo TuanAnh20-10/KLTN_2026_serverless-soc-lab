@@ -16,8 +16,12 @@ from requests.exceptions import ReadTimeout
 from dotenv import load_dotenv
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -347,40 +351,55 @@ def _send_telegram_alert(incident_id: str, triage: Dict[str, Any], approve_url: 
 def main(event: Any, context: Any = None) -> None:
     """Cloud Function entrypoint: Pub/Sub -> AI triage (Gemini + OpenAI fallback) -> Telegram alert."""
     try:
+        logger.info("[Step 1/6] Received Pub/Sub event — decoding Base64 payload...")
         payload = _extract_pubsub_payload(event)
+        logger.info("[Step 1/6] Payload decoded successfully")
 
         # ── Filter out "closed" incident notifications ──────────────────
-        # Cloud Monitoring sends two notifications per alert:
-        #   1. "open"   → metric exceeds threshold (action required)
-        #   2. "closed" → metric drops below threshold (already handled)
-        # We only process "open" incidents to avoid duplicate alerts.
         incident = payload.get("incident", {})
         incident_state = incident.get("state", "").lower()
+        policy_name = incident.get("policy_name", "unknown")
+
+        logger.info("[Step 2/6] Checking incident state: state=%s, policy=%s", incident_state, policy_name)
         if incident_state == "closed":
             logger.info(
-                "Skipping closed incident (already remediated): policy=%s, ended_at=%s",
-                incident.get("policy_name", "unknown"),
+                "[Step 2/6] Skipping CLOSED incident (already remediated): policy=%s, ended_at=%s",
+                policy_name,
                 incident.get("ended_at", "unknown"),
             )
             return
+        logger.info("[Step 2/6] Incident state is OPEN — proceeding with triage")
 
+        logger.info("[Step 3/6] Normalizing event data for AI triage...")
         triage_input = _normalize_for_triage(payload)
+        logger.info(
+            "[Step 3/6] Normalized: principal=%s, sa=%s, action=%s",
+            triage_input.get("principal_email"),
+            triage_input.get("service_account_email"),
+            triage_input.get("action"),
+        )
 
         # ── AI Triage with fallback ──────────────────────────────────
-        # Primary:  Gemini 2.5 Flash (Google)
-        # Fallback: GPT-5.4 Mini (OpenAI) — if Gemini fails
+        logger.info("[Step 4/6] Starting AI triage — Primary: Gemini 2.5 Flash (timeout=30s)")
         ai_provider = "gemini"
         try:
             model_output = _call_gemini_structured(triage_input)
-            logger.info("AI triage completed via Gemini")
+            logger.info("[Step 4/6] AI triage completed via Gemini")
         except Exception as gemini_exc:
             logger.warning(
-                "Gemini failed (%s), switching to OpenAI fallback...",
-                type(gemini_exc).__name__,
+                "[Step 4/6] Gemini failed (%s: %s) — switching to OpenAI GPT-5.4 Mini fallback...",
+                type(gemini_exc).__name__, gemini_exc,
             )
             ai_provider = "openai-gpt-5.4-mini"
             model_output = _call_openai_fallback(triage_input)
-            logger.info("AI triage completed via OpenAI fallback (GPT-5.4 Mini)")
+            logger.info("[Step 4/6] AI triage completed via OpenAI fallback (GPT-5.4 Mini)")
+
+        logger.info(
+            "[Step 4/6] AI Result: severity=%s, confidence=%s, escalate=%s",
+            model_output.get("severity"),
+            model_output.get("confidence"),
+            model_output.get("should_escalate"),
+        )
 
         incident_id = uuid.uuid4().hex[:16]
         service_account_email = _normalize_service_account_email(
@@ -389,21 +408,24 @@ def main(event: Any, context: Any = None) -> None:
             triage_input.get("service_account_email")
         ) or "unknown"
 
+        logger.info("[Step 5/6] Signing approval URL (HMAC-SHA256) — incident_id=%s", incident_id)
         approve_url = _build_signed_approve_url(
             incident_id=incident_id,
             service_account_email=service_account_email,
             severity=model_output.get("severity", "HIGH"),
         )
 
+        logger.info("[Step 6/6] Sending Telegram alert to SOC Admin...")
         _send_telegram_alert(incident_id=incident_id, triage=model_output, approve_url=approve_url)
 
         logger.info(
-            "Processed incident_id=%s severity=%s should_escalate=%s ai_provider=%s",
+            "[DONE] Pipeline complete: incident_id=%s | severity=%s | escalate=%s | ai_provider=%s | sa=%s",
             incident_id,
             model_output.get("severity"),
             model_output.get("should_escalate"),
             ai_provider,
+            service_account_email,
         )
     except Exception as exc:
-        logger.exception("Failed to process Pub/Sub event: %s", exc)
+        logger.exception("[ERROR] Failed to process Pub/Sub event: %s", exc)
         raise
