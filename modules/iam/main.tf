@@ -25,3 +25,9 @@ resource "google_organization_iam_member" "soar_securitycenter_admin" {
   role   = "roles/securitycenter.admin"
   member = "serviceAccount:${google_service_account.soar_orchestrator.email}"
 }
+
+resource "google_project_iam_member" "soar_logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.privateLogViewer"
+  member  = "serviceAccount:${google_service_account.soar_orchestrator.email}"
+}

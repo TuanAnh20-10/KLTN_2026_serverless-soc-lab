@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 import requests
 from requests.exceptions import ReadTimeout
 from dotenv import load_dotenv
+import google.auth
+import google.auth.transport.requests as google_requests
 
 
 logging.basicConfig(
@@ -128,6 +130,92 @@ def _parse_structured_json(text_output: str) -> Dict[str, Any]:
     return parsed
 
 
+def _geolocate_ip(ip_str: Optional[str]) -> Dict[str, str]:
+    """Resolve an IP address to geographic context via ip-api.com.
+
+    Returns country, city, ISP for the AI to detect
+    geographic anomalies (e.g., access from unexpected country).
+    Free tier: 45 requests/minute — sufficient for alert-driven pipeline.
+    This is context enrichment only, NOT used for allow/deny decisions.
+    """
+    fallback = {"country": "unknown", "city": "unknown", "isp": "unknown"}
+    if not ip_str or ip_str == "unknown":
+        return fallback
+    try:
+        resp = requests.get(
+            f"http://ip-api.com/json/{ip_str}?fields=status,country,city,isp,org",
+            timeout=3,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "success":
+                return {
+                    "country": data.get("country", "unknown"),
+                    "city": data.get("city", "unknown"),
+                    "isp": data.get("isp", "unknown"),
+                }
+        return fallback
+    except Exception:
+        logger.warning("IP geolocation lookup failed for %s — using fallback", ip_str)
+        return fallback
+
+
+def _fetch_caller_ip_from_logs(principal_email: str) -> Optional[str]:
+    """Query Cloud Logging API to retrieve the callerIp from recent audit logs.
+
+    The Cloud Monitoring Alert notification does NOT contain callerIp—it only
+    includes aggregated metric data.  To get the actual IP, we query the
+    audit log entries that triggered the alert.
+    """
+    project_id = os.getenv("PROJECT_ID", "")
+    if not project_id or not principal_email or principal_email == "unknown":
+        return None
+
+    try:
+        credentials, _ = google.auth.default()
+        credentials.refresh(google.auth.transport.requests.Request())
+        auth_session = google.auth.transport.requests.AuthorizedSession(credentials)
+
+        from datetime import datetime, timezone, timedelta
+        since = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+        log_filter = (
+            f'logName="projects/{project_id}/logs/cloudaudit.googleapis.com%2Fdata_access" '
+            f'AND protoPayload.methodName="storage.objects.get" '
+            f'AND protoPayload.authenticationInfo.principalEmail="{principal_email}" '
+            f'AND timestamp>="{since}"'
+        )
+        body = {
+            "resourceNames": [f"projects/{project_id}"],
+            "filter": log_filter,
+            "orderBy": "timestamp desc",
+            "pageSize": 1,
+        }
+        resp = auth_session.post(
+            "https://logging.googleapis.com/v2/entries:list",
+            json=body,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            entries = resp.json().get("entries", [])
+            if entries:
+                caller_ip = (
+                    entries[0]
+                    .get("protoPayload", {})
+                    .get("requestMetadata", {})
+                    .get("callerIp")
+                )
+                if caller_ip:
+                    logger.info("Fetched callerIp from Cloud Logging: %s", caller_ip)
+                    return caller_ip
+        return None
+    except Exception as exc:
+        logger.warning("Cloud Logging query for callerIp failed: %s", exc)
+        return None
+
+
 def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
     principal = _deep_find_first(
         payload,
@@ -152,12 +240,25 @@ def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
     resource_name = _deep_find_first(payload, {"resourceName", "resource_name", "resource"})
     event_time = _deep_find_first(payload, {"timestamp", "eventTime", "time"})
 
+    # callerIp: try payload first, then query Cloud Logging as fallback
+    caller_ip = _deep_find_first(payload, {"callerIp", "caller_ip", "sourceIp", "remoteIp"})
+    if not caller_ip:
+        caller_ip = _fetch_caller_ip_from_logs(
+            principal or _normalize_service_account_email(service_account) or "unknown"
+        )
+
+    ip_geo = _geolocate_ip(caller_ip)
+
     return {
         "principal_email": principal or "unknown",
         "service_account_email": _normalize_service_account_email(service_account) or "unknown",
         "action": method_name or "unknown",
         "resource_name": resource_name or "unknown",
         "event_time": event_time or "unknown",
+        "caller_ip": caller_ip or "unknown",
+        "ip_country": ip_geo["country"],
+        "ip_city": ip_geo["city"],
+        "ip_isp": ip_geo["isp"],
         "raw_event": payload,
     }
 
@@ -166,6 +267,7 @@ def _build_triage_prompt(triage_input: Dict[str, Any]) -> str:
     return (
         "You are a SOC triage assistant for a GCP security pipeline "
         "that monitors a honeypot bucket to detect insider threats. "
+        "This organization is based in Vietnam. "
         "Analyze this GCP audit event and return ONLY valid JSON "
         "with this exact schema: "
         "{"
@@ -177,6 +279,11 @@ def _build_triage_prompt(triage_input: Dict[str, Any]) -> str:
         '"recommended_remediation":"...",'
         '"service_account_email":"..."'
         "}. "
+        "The event includes IP geolocation fields (ip_country, ip_city, ip_isp). "
+        "Access from a foreign country is a strong indicator of credential theft, "
+        "as stolen keys are often used from outside the organization's geography. "
+        "Factor the caller IP geolocation into your overall assessment. "
+        "Always mention the caller IP, country, and ISP in your reason. "
         "Do not include markdown, comments, or extra keys. "
         f"Event: {json.dumps(triage_input, ensure_ascii=True)}"
     )
@@ -373,10 +480,13 @@ def main(event: Any, context: Any = None) -> None:
         logger.info("[Step 3/6] Normalizing event data for AI triage...")
         triage_input = _normalize_for_triage(payload)
         logger.info(
-            "[Step 3/6] Normalized: principal=%s, sa=%s, action=%s",
+            "[Step 3/6] Normalized: principal=%s, sa=%s, caller_ip=%s (geo: %s, %s, ISP: %s)",
             triage_input.get("principal_email"),
             triage_input.get("service_account_email"),
-            triage_input.get("action"),
+            triage_input.get("caller_ip"),
+            triage_input.get("ip_country"),
+            triage_input.get("ip_city"),
+            triage_input.get("ip_isp"),
         )
 
         # ── AI Triage with fallback ──────────────────────────────────
