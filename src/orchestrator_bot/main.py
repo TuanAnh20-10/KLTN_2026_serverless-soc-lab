@@ -160,16 +160,17 @@ def _geolocate_ip(ip_str: Optional[str]) -> Dict[str, str]:
         return fallback
 
 
-def _fetch_caller_ip_from_logs(principal_email: str) -> Optional[str]:
-    """Query Cloud Logging API to retrieve the callerIp from recent audit logs.
+def _fetch_audit_context_from_logs(principal_email: str) -> Dict[str, Optional[str]]:
+    """Query Cloud Logging API to retrieve callerIp and userAgent from recent audit logs.
 
-    The Cloud Monitoring Alert notification does NOT contain callerIp—it only
-    includes aggregated metric data.  To get the actual IP, we query the
-    audit log entries that triggered the alert.
+    The Cloud Monitoring Alert notification does NOT contain callerIp or
+    userAgent—it only includes aggregated metric data.  To get these fields,
+    we query the audit log entries that triggered the alert.
     """
+    empty = {"caller_ip": None, "user_agent": None}
     project_id = os.getenv("PROJECT_ID", "")
     if not project_id or not principal_email or principal_email == "unknown":
-        return None
+        return empty
 
     try:
         credentials, _ = google.auth.default()
@@ -201,19 +202,24 @@ def _fetch_caller_ip_from_logs(principal_email: str) -> Optional[str]:
         if resp.status_code == 200:
             entries = resp.json().get("entries", [])
             if entries:
-                caller_ip = (
+                request_metadata = (
                     entries[0]
                     .get("protoPayload", {})
                     .get("requestMetadata", {})
-                    .get("callerIp")
                 )
-                if caller_ip:
-                    logger.info("Fetched callerIp from Cloud Logging: %s", caller_ip)
-                    return caller_ip
-        return None
+                result = {
+                    "caller_ip": request_metadata.get("callerIp"),
+                    "user_agent": request_metadata.get("callerSuppliedUserAgent"),
+                }
+                logger.info(
+                    "Fetched audit context from Cloud Logging: ip=%s, ua=%s",
+                    result["caller_ip"], result["user_agent"],
+                )
+                return result
+        return empty
     except Exception as exc:
-        logger.warning("Cloud Logging query for callerIp failed: %s", exc)
-        return None
+        logger.warning("Cloud Logging query for audit context failed: %s", exc)
+        return empty
 
 
 def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -240,14 +246,25 @@ def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
     resource_name = _deep_find_first(payload, {"resourceName", "resource_name", "resource"})
     event_time = _deep_find_first(payload, {"timestamp", "eventTime", "time"})
 
-    # callerIp: try payload first, then query Cloud Logging as fallback
+    # Enrich from Cloud Logging: callerIp + userAgent (single API call)
     caller_ip = _deep_find_first(payload, {"callerIp", "caller_ip", "sourceIp", "remoteIp"})
+    user_agent = None
     if not caller_ip:
-        caller_ip = _fetch_caller_ip_from_logs(
+        audit_ctx = _fetch_audit_context_from_logs(
             principal or _normalize_service_account_email(service_account) or "unknown"
         )
+        caller_ip = audit_ctx["caller_ip"]
+        user_agent = audit_ctx["user_agent"]
 
     ip_geo = _geolocate_ip(caller_ip)
+
+    # Time-of-day context (Vietnam UTC+7)
+    from datetime import datetime, timezone, timedelta
+    vn_tz = timezone(timedelta(hours=7))
+    now_vn = datetime.now(vn_tz)
+    access_hour = now_vn.hour
+    access_day = now_vn.strftime("%A")  # e.g. "Monday"
+    is_business_hours = access_day not in ("Saturday", "Sunday") and 8 <= access_hour <= 18
 
     return {
         "principal_email": principal or "unknown",
@@ -259,6 +276,10 @@ def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
         "ip_country": ip_geo["country"],
         "ip_city": ip_geo["city"],
         "ip_isp": ip_geo["isp"],
+        "user_agent": user_agent or "unknown",
+        "access_time_vn": now_vn.strftime("%Y-%m-%d %H:%M:%S (UTC+7)"),
+        "access_day": access_day,
+        "is_business_hours": is_business_hours,
         "raw_event": payload,
     }
 
@@ -279,11 +300,12 @@ def _build_triage_prompt(triage_input: Dict[str, Any]) -> str:
         '"recommended_remediation":"...",'
         '"service_account_email":"..."'
         "}. "
-        "The event includes IP geolocation fields (ip_country, ip_city, ip_isp). "
-        "Access from a foreign country is a strong indicator of credential theft, "
-        "as stolen keys are often used from outside the organization's geography. "
-        "Factor the caller IP geolocation into your overall assessment. "
-        "Always mention the caller IP, country, and ISP in your reason. "
+        "The event includes enrichment context: IP geolocation (ip_country, ip_city, ip_isp), "
+        "user_agent (the tool or client used), and time-of-day (access_time_vn, access_day, is_business_hours). "
+        "Foreign-country access is a strong signal of credential theft. "
+        "Non-business-hours activity and automated tooling add to suspicion. "
+        "Weigh these signals together when assessing severity and confidence. "
+        "Always mention the caller IP, country, ISP, user agent, and access time in your reason. "
         "Do not include markdown, comments, or extra keys. "
         f"Event: {json.dumps(triage_input, ensure_ascii=True)}"
     )
@@ -480,13 +502,17 @@ def main(event: Any, context: Any = None) -> None:
         logger.info("[Step 3/6] Normalizing event data for AI triage...")
         triage_input = _normalize_for_triage(payload)
         logger.info(
-            "[Step 3/6] Normalized: principal=%s, sa=%s, caller_ip=%s (geo: %s, %s, ISP: %s)",
+            "[Step 3/6] Normalized: principal=%s, sa=%s, caller_ip=%s (geo: %s, %s, ISP: %s), ua=%s, time=%s (%s, biz=%s)",
             triage_input.get("principal_email"),
             triage_input.get("service_account_email"),
             triage_input.get("caller_ip"),
             triage_input.get("ip_country"),
             triage_input.get("ip_city"),
             triage_input.get("ip_isp"),
+            triage_input.get("user_agent"),
+            triage_input.get("access_time_vn"),
+            triage_input.get("access_day"),
+            triage_input.get("is_business_hours"),
         )
 
         # ── AI Triage with fallback ──────────────────────────────────
