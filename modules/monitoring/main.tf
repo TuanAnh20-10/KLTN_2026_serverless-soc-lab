@@ -3,9 +3,7 @@ resource "google_logging_metric" "mass_download_metric" {
   name        = "mass_download_metric"
   project     = var.project_id
   description = "Counts the number of storage.objects.get requests"
-  
-  filter = "resource.type=\"gcs_bucket\" AND logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\""
-  
+  filter      = "resource.type=\"gcs_bucket\" AND logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\""
   label_extractors = {
     "principal_email" = "EXTRACT(protoPayload.authenticationInfo.principalEmail)"
   }
@@ -32,7 +30,7 @@ resource "google_monitoring_notification_channel" "pubsub_channel" {
   }
 }
 
-# 3. Tạo Alert Policy để bẫy > 100 requests / phút
+# 3. Tạo Alert Policy để bẫy > 25 requests / phút
 resource "google_monitoring_alert_policy" "mass_download_alert" {
   display_name = "High Volume GCS Access Detected"
   project      = var.project_id
@@ -42,11 +40,10 @@ resource "google_monitoring_alert_policy" "mass_download_alert" {
     display_name = "Condition for mass download"
 
     condition_threshold {
-      filter     = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.mass_download_metric.name}\" AND resource.type=\"gcs_bucket\""
-      duration   = "0s" # Không cần chờ thêm thời gian, vượt ngưỡng là báo ngay
-      comparison = "COMPARISON_GT"
-      
-      threshold_value = 50 # Ngưỡng 50 files để test
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.mass_download_metric.name}\" AND resource.type=\"gcs_bucket\""
+      duration        = "0s" # Không cần chờ thêm thời gian, vượt ngưỡng là báo ngay
+      comparison      = "COMPARISON_GT"
+      threshold_value = 25
 
       aggregations {
         alignment_period     = "60s" # Cửa sổ 1 phút

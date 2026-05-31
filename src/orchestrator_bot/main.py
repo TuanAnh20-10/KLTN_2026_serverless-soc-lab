@@ -29,7 +29,7 @@ GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/mode
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 TELEGRAM_API_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 load_dotenv()
 
@@ -246,25 +246,40 @@ def _normalize_for_triage(payload: Dict[str, Any]) -> Dict[str, Any]:
     resource_name = _deep_find_first(payload, {"resourceName", "resource_name", "resource"})
     event_time = _deep_find_first(payload, {"timestamp", "eventTime", "time"})
 
-    # Enrich from Cloud Logging: callerIp + userAgent (single API call)
+    # ── Layer 1/4: Cloud Logging API (callerIp + userAgent) ──────────
     caller_ip = _deep_find_first(payload, {"callerIp", "caller_ip", "sourceIp", "remoteIp"})
     user_agent = None
     if not caller_ip:
+        logger.info("[Step 3/6] Layer 1/4: Querying Cloud Logging API (entries:list) for callerIp + userAgent...")
         audit_ctx = _fetch_audit_context_from_logs(
             principal or _normalize_service_account_email(service_account) or "unknown"
         )
         caller_ip = audit_ctx["caller_ip"]
         user_agent = audit_ctx["user_agent"]
+        logger.info("[Step 3/6] Layer 1/4: Cloud Logging → callerIp=%s, userAgent=%s", caller_ip, user_agent)
+    else:
+        logger.info("[Step 3/6] Layer 1/4: callerIp found in payload → %s (skipping Cloud Logging query)", caller_ip)
 
+    # ── Layer 2/4: IP Geolocation (ip-api.com) ──────────────────────
+    logger.info("[Step 3/6] Layer 2/4: Resolving IP geolocation via ip-api.com for %s...", caller_ip)
     ip_geo = _geolocate_ip(caller_ip)
+    logger.info("[Step 3/6] Layer 2/4: Geolocation → country=%s, city=%s, ISP=%s", ip_geo["country"], ip_geo["city"], ip_geo["isp"])
 
-    # Time-of-day context (Vietnam UTC+7)
+    # ── Layer 3/4: User Agent Analysis ──────────────────────────────
+    ua_display = user_agent or "unknown"
+    logger.info("[Step 3/6] Layer 3/4: User Agent analysis → %s", ua_display)
+
+    # ── Layer 4/4: Time-of-Day Context (UTC+7) ─────────────────────
     from datetime import datetime, timezone, timedelta
     vn_tz = timezone(timedelta(hours=7))
     now_vn = datetime.now(vn_tz)
     access_hour = now_vn.hour
     access_day = now_vn.strftime("%A")  # e.g. "Monday"
     is_business_hours = access_day not in ("Saturday", "Sunday") and 8 <= access_hour <= 18
+    logger.info(
+        "[Step 3/6] Layer 4/4: Time-of-Day → %s %s (UTC+7), business_hours=%s",
+        access_day, now_vn.strftime("%H:%M:%S"), is_business_hours,
+    )
 
     return {
         "principal_email": principal or "unknown",
@@ -348,24 +363,15 @@ def _call_gemini_structured(triage_input: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
 
-    # Retry once on timeout — gemini-2.5-flash (thinking model) can be slow
-    max_attempts = 2
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = requests.post(
-                url,
-                params={"key": api_key},
-                json=request_body,
-                timeout=30,
-            )
-            response.raise_for_status()
-            break
-        except ReadTimeout:
-            if attempt < max_attempts:
-                logger.warning("Gemini API timeout (attempt %d/%d), retrying...", attempt, max_attempts)
-            else:
-                logger.error("Gemini API timeout after %d attempts", max_attempts)
-                raise
+    # Single attempt — on failure, fallback to GPT immediately (no retry)
+    api_timeout = int(os.getenv("GEMINI_TIMEOUT", "60"))
+    response = requests.post(
+        url,
+        params={"key": api_key},
+        json=request_body,
+        timeout=api_timeout,
+    )
+    response.raise_for_status()
     model_response = response.json()
 
     parts = (
@@ -501,12 +507,11 @@ def main(event: Any, context: Any = None) -> None:
             return
         logger.info("[Step 2/6] Incident state is OPEN — proceeding with triage")
 
-        logger.info("[Step 3/6] Normalizing event data for AI triage...")
+        logger.info("[Step 3/6] Starting context enrichment pipeline (4 layers)...")
         triage_input = _normalize_for_triage(payload)
         logger.info(
-            "[Step 3/6] Normalized: principal=%s, sa=%s, caller_ip=%s (geo: %s, %s, ISP: %s), ua=%s, time=%s (%s, biz=%s)",
+            "[Step 3/6] ✓ Enrichment complete — principal=%s, caller_ip=%s (%s/%s, ISP: %s), ua=%s, time=%s (%s, biz=%s)",
             triage_input.get("principal_email"),
-            triage_input.get("service_account_email"),
             triage_input.get("caller_ip"),
             triage_input.get("ip_country"),
             triage_input.get("ip_city"),
@@ -518,11 +523,13 @@ def main(event: Any, context: Any = None) -> None:
         )
 
         # ── AI Triage with fallback ──────────────────────────────────
-        logger.info("[Step 4/6] Starting AI triage — Primary: Gemini 2.5 Flash (timeout=30s)")
+        gemini_model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        gemini_timeout = os.getenv("GEMINI_TIMEOUT", "60")
+        logger.info("[Step 4/6] Starting AI triage — Primary: %s (timeout=%ss)", gemini_model, gemini_timeout)
         ai_provider = "gemini"
         try:
             model_output = _call_gemini_structured(triage_input)
-            logger.info("[Step 4/6] AI triage completed via Gemini")
+            logger.info("[Step 4/6] AI triage completed via %s", gemini_model)
         except Exception as gemini_exc:
             logger.warning(
                 "[Step 4/6] Gemini failed (%s: %s) — switching to OpenAI GPT-5.4 Mini fallback...",
