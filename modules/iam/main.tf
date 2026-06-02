@@ -25,3 +25,16 @@ resource "google_organization_iam_member" "soar_securitycenter_admin" {
   role   = "roles/securitycenter.admin"
   member = "serviceAccount:${google_service_account.soar_orchestrator.email}"
 }
+
+resource "google_project_iam_member" "soar_logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.privateLogViewer"
+  member  = "serviceAccount:${google_service_account.soar_orchestrator.email}"
+}
+
+# Grant Storage Viewer at project level so victim can list buckets (reconnaissance phase)
+resource "google_project_iam_member" "victim_storage_viewer" {
+  project = var.project_id
+  role    = "roles/storage.viewer"
+  member  = "serviceAccount:${google_service_account.victim_employee.email}"
+}

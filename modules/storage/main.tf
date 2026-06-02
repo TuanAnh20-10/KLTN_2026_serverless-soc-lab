@@ -24,7 +24,7 @@ resource "null_resource" "upload_dummy_files" {
       $tempDir = "temp_honeypot_${random_id.bucket_suffix.hex}"
       New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
       1..55 | ForEach-Object {
-        "This is confidential file number $_. Do not leak!" | Out-File -FilePath "$tempDir\confidential_file_$_.txt" -Encoding ASCII
+        "This is confidential file number $_. Do not leak!" | Out-File -FilePath "$tempDir\confidential_file_$_.csv" -Encoding ASCII
       }
       gsutil -m cp "$tempDir\*" "gs://${google_storage_bucket.confidential_data.name}/"
       Remove-Item -Recurse -Force $tempDir

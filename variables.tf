@@ -63,10 +63,7 @@ variable "gemini_api_key" {
 variable "gemini_model" {
   description = "Gemini model code for the orchestrator bot"
   type        = string
-  default     = "gemini-3-flash-preview"
-  #default     = "gemini-2.5-flash"
-  #default     = "gemini-2.5-flash-lite"
-  #default     = "gemini-3.1-flash-lite-preview"
+  default     = "gemini-2.5-flash"
 }
 
 variable "tele_bot_token" {
