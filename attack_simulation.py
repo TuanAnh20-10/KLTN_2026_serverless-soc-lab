@@ -13,14 +13,40 @@ Usage:
 """
 
 import os
+import subprocess
+import sys
 import tempfile
 from google.cloud import storage
 from google.oauth2 import service_account
 
+# ── Terraform Output Helper ───────────────────────────────────────
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+def get_terraform_output(key: str) -> str:
+    """Read a value from `terraform output` in the project root."""
+    try:
+        result = subprocess.run(
+            ["terraform", "output", "-raw", key],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
 # ── Configuration ──────────────────────────────────────────────────
-KEY_FILE = os.path.join(os.path.dirname(__file__), "victim_key.json")
-BUCKET_NAME = "secops-lab-confidential-data-b232e290"
+KEY_FILE = os.path.join(PROJECT_ROOT, "victim_key.json")
+BUCKET_NAME = get_terraform_output("honeypot_bucket_name")
 DOWNLOAD_DIR = tempfile.mkdtemp(prefix="exfil_")
+
+if not BUCKET_NAME:
+    print("[!] ERROR: Could not read 'honeypot_bucket_name' from terraform output.")
+    print("[!] Make sure you have run 'terraform apply' in the project root.")
+    sys.exit(1)
 
 def main():
     print(f"[*] Loading stolen credentials from: {KEY_FILE}")

@@ -29,7 +29,7 @@ GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/mode
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
 TELEGRAM_API_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 load_dotenv()
 
