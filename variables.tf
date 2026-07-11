@@ -95,3 +95,14 @@ variable "openai_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "tele_bot_token_no_enrichment" {
+  description = "Telegram Bot Token for no-enrichment comparison bot"
+  type        = string
+  sensitive   = true
+}
+
+variable "tele_chat_id_no_enrichment" {
+  description = "Telegram Chat ID for no-enrichment comparison bot"
+  type        = string
+}

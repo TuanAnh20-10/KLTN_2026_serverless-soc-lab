@@ -74,6 +74,9 @@ module "serverless" {
   openai_api_key           = var.openai_api_key
   orchestrator_source_dir  = abspath("${path.root}/src/orchestrator_bot")
   webhook_source_dir       = abspath("${path.root}/src/webhook_remediation")
+  no_enrichment_source_dir     = abspath("${path.root}/src/orchestrator_no_enrichment")
+  tele_bot_token_no_enrichment = var.tele_bot_token_no_enrichment
+  tele_chat_id_no_enrichment   = var.tele_chat_id_no_enrichment
 }
 
 module "monitoring" {

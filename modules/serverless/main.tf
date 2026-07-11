@@ -135,3 +135,66 @@ resource "google_cloudfunctions2_function" "orchestrator_bot" {
     service_account_email = var.soar_sa_email
   }
 }
+
+# ═══════════════════════════════════════════════════════════════
+# No-Enrichment Orchestrator (comparison demo)
+# Same Pub/Sub trigger → both functions fire simultaneously
+# ═══════════════════════════════════════════════════════════════
+
+data "archive_file" "no_enrichment_zip" {
+  type        = "zip"
+  source_dir  = var.no_enrichment_source_dir
+  output_path = "${path.module}/orchestrator_no_enrichment.zip"
+}
+
+resource "google_storage_bucket_object" "no_enrichment_zip" {
+  name   = "orchestrator_no_enrichment_${data.archive_file.no_enrichment_zip.output_md5}.zip"
+  bucket = google_storage_bucket.cf_source_bucket.name
+  source = data.archive_file.no_enrichment_zip.output_path
+}
+
+resource "google_cloudfunctions2_function" "orchestrator_no_enrichment" {
+  name        = "orchestrator-no-enrichment"
+  location    = var.region
+  project     = var.project_id
+  description = "Comparison bot: AI triage WITHOUT context enrichment"
+
+  build_config {
+    runtime     = "python310"
+    entry_point = "main"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.cf_source_bucket.name
+        object = google_storage_bucket_object.no_enrichment_zip.name
+      }
+    }
+  }
+
+  service_config {
+    max_instance_count    = 1
+    available_memory      = "256M"
+    timeout_seconds       = 120
+    service_account_email = var.soar_sa_email
+    environment_variables = {
+      GEMINI_API_KEY                = var.gemini_api_key
+      GEMINI_MODEL                  = var.gemini_model
+      TELE_BOT_TOKEN_NO_ENRICHMENT  = var.tele_bot_token_no_enrichment
+      TELE_CHAT_ID_NO_ENRICHMENT    = var.tele_chat_id_no_enrichment
+    }
+  }
+
+  event_trigger {
+    trigger_region        = var.region
+    event_type            = "google.cloud.pubsub.topic.v1.messagePublished"
+    pubsub_topic          = var.pubsub_topic_id
+    retry_policy          = "RETRY_POLICY_DO_NOT_RETRY"
+    service_account_email = var.soar_sa_email
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "no_enrichment_invoker" {
+  location = google_cloudfunctions2_function.orchestrator_no_enrichment.location
+  service  = google_cloudfunctions2_function.orchestrator_no_enrichment.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.soar_sa_email}"
+}
