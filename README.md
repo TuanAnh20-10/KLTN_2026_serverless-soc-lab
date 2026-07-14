@@ -127,6 +127,9 @@ terraform apply "tfplan"
 ### Bước 3: Mô phỏng tấn công
 
 ```bash
+# Trích xuất key của service account victim-employee từ terraform output
+terraform output -raw victim_sa_json_key | Out-File -Encoding ASCII victim_key.json
+
 # Cách 1: gsutil CLI
 gcloud auth activate-service-account --key-file=victim_key.json
 gsutil -m cp -r gs://<honeypot-bucket>/* .
