@@ -1,0 +1,195 @@
+================================================================================
+  HƯỚNG DẪN SỬ DỤNG
+  Đề tài: Thử nghiệm Google Chronicle — Ứng dụng AI trong giám sát và phản ứng
+          an ninh trên nền tảng Google Cloud
+================================================================================
+
+Tài liệu này hướng dẫn cách biên dịch và chạy chương trình. Vui lòng đảm bảo đã
+hoàn thành các bước trong file HuongDanCaiDat.txt trước khi thực hiện.
+
+================================================================================
+1. KHỞI TẠO VÀ TRIỂN KHAI HẠ TẦNG (INFRASTRUCTURE)
+================================================================================
+
+Bước 1: Mở terminal tại thư mục gốc của dự án.
+
+Bước 2: Đăng nhập vào Google Cloud.
+  gcloud auth login
+  gcloud auth application-default login
+  gcloud config set project <PROJECT_ID>
+
+Bước 3: Cấu hình biến Terraform.
+  copy terraform.tfvars.example terraform.tfvars      (Windows)
+  cp terraform.tfvars.example terraform.tfvars         (macOS/Linux)
+
+  Mở file terraform.tfvars bằng trình soạn thảo và điền đầy đủ các giá trị:
+    - project_id, project_number, organization_id
+    - gemini_api_key, tele_bot_token, tele_chat_id
+    (Xem chi tiết trong file HuongDanCaiDat.txt, mục 6)
+
+Bước 4: Khởi tạo Terraform (tải các provider cần thiết).
+  terraform init
+
+Bước 5: Xem trước kế hoạch triển khai.
+  terraform plan -out=tfplan
+
+  Lệnh này sẽ hiển thị danh sách các tài nguyên sẽ được tạo trên GCP.
+  Kiểm tra kỹ trước khi áp dụng.
+
+Bước 6: Áp dụng và triển khai toàn bộ hạ tầng.
+  terraform apply "tfplan"
+
+  Quá trình này sẽ tạo tự động toàn bộ tài nguyên trên Google Cloud:
+    - VPC Network + Firewall Rules
+    - Cloud Storage Bucket (honeypot)
+    - 55 file giả lập dữ liệu nhạy cảm
+    - Service Accounts (victim-employee, soar-orchestrator-sa)
+    - IAM Bindings
+    - Log Sink + Pub/Sub Topic
+    - Log-based Metric + Alert Policy
+    - Cloud Function: Orchestrator Bot
+    - Cloud Function: Webhook Remediation
+    - Security Command Center Source
+
+  Thời gian triển khai: khoảng 3-5 phút.
+
+Bước 7: Xem thông tin đầu ra.
+  terraform output
+
+  Các giá trị quan trọng:
+    - honeypot_bucket_name    : Tên bucket bẫy
+    - orchestrator_url        : URL của hàm Orchestrator Bot
+    - webhook_url             : URL của hàm Webhook Remediation
+    - victim_sa_email         : Email của Service Account nạn nhân
+
+================================================================================
+2. MÔ PHỎNG TẤN CÔNG (ATTACK SIMULATION)
+================================================================================
+
+Hệ thống hỗ trợ 2 phương pháp mô phỏng tấn công, tạo ra User Agent khác nhau
+để kiểm tra khả năng phân biệt của AI:
+
+---------- Cách 1: gsutil CLI (User Agent = gsutil/x.x) ----------
+
+Bước 1: Trích xuất khóa xác thực của Service Account nạn nhân.
+  terraform output -raw victim_sa_json_key | Out-File -Encoding ASCII victim_key.json   (PowerShell)
+  terraform output -raw victim_sa_json_key > victim_key.json                             (Bash)
+
+Bước 2: Xác thực bằng khóa đánh cắp.
+  gcloud auth activate-service-account --key-file=victim_key.json
+
+Bước 3: Tải toàn bộ dữ liệu từ bucket (kích hoạt cảnh báo).
+  gsutil -m cp -r gs://<honeypot-bucket-name>/* .
+
+  Thay <honeypot-bucket-name> bằng giá trị từ lệnh: terraform output honeypot_bucket_name
+
+---------- Cách 2: Python SDK (User Agent = gcloud-python/...) ----------
+
+Bước 1: Cài thư viện Python (nếu chưa cài).
+  pip install google-cloud-storage google-auth
+
+Bước 2: Đảm bảo file victim_key.json đã được tạo (xem Cách 1, Bước 1).
+
+Bước 3: Chạy script mô phỏng tấn công.
+  python attack_simulation.py
+
+  Script sẽ tự động:
+    - Đọc thông tin bucket từ terraform output
+    - Xác thực bằng victim_key.json
+    - Tải toàn bộ file từ bucket về thư mục tạm
+
+---------- Đợi kết quả ----------
+
+Sau khi chạy bất kỳ cách nào, đợi khoảng 3-5 phút (do Cloud Monitoring
+có Alignment Period 60 giây và Cooldown Period 180 giây).
+
+Kết quả mong đợi:
+  1. Hệ thống tự động phát hiện hành vi tải file bất thường.
+  2. Orchestrator Bot làm giàu ngữ cảnh (IP, User Agent, Time-of-Day).
+  3. AI (Gemini hoặc GPT) phân tích và đánh giá mức độ nghiêm trọng.
+  4. Cảnh báo được gửi đến Telegram kèm nút "Approve Remediation".
+
+================================================================================
+3. PHÊ DUYỆT XỬ LÝ SỰ CỐ (HUMAN-IN-THE-LOOP)
+================================================================================
+
+Bước 1: Mở ứng dụng Telegram, tìm tin nhắn cảnh báo từ Bot.
+
+Bước 2: Đọc nội dung phân tích của AI (severity, confidence, summary, reason).
+
+Bước 3: Nhấn nút "Approve Remediation" để kích hoạt phản ứng tự động.
+
+Bước 4: Hệ thống sẽ tự động thực hiện:
+  - Vô hiệu hóa Service Account bị xâm nhập (disable qua IAM API)
+  - Tạo Finding trên Security Command Center (với MITRE ATT&CK mapping)
+  - Ghi nhật ký kiểm toán (audit trail) vào Cloud Logging
+
+Bước 5: Xác nhận kết quả:
+  - Trang web hiển thị "Remediation Successful"
+  - Kiểm tra trên GCP Console:
+      + IAM: Service Account đã bị Disabled
+      + SCC: Finding mới được tạo với kỹ thuật MITRE tương ứng
+
+================================================================================
+4. KIỂM TRA LUẬT PHÁT HIỆN YARA-L TRÊN BIGQUERY
+================================================================================
+
+Các luật phát hiện YARA-L đã được chuyển đổi thành câu truy vấn SQL tương đương
+để kiểm chứng trên BigQuery (do giới hạn cấp phép Chronicle).
+
+Bước 1: Truy cập BigQuery Console tại https://console.cloud.google.com/bigquery
+
+Bước 2: Mở file yaral_detection_rules.md trong mã nguồn.
+
+Bước 3: Sao chép câu truy vấn SQL của từng luật và chạy trên BigQuery Console.
+
+Các luật có sẵn:
+  - Luật 1: Phát hiện tải file hàng loạt (Mass Download Detection)
+  - Luật 2: Phát hiện truy cập ngoài giờ hành chính (Off-Hours Access)
+  - Luật 3: Phát hiện truy cập bằng công cụ tự động (Suspicious Tool Access)
+
+================================================================================
+5. DỌN DẸP TÀI NGUYÊN (SAU KHI HOÀN TẤT)
+================================================================================
+
+Để tránh phát sinh chi phí, xóa toàn bộ tài nguyên đã tạo trên GCP:
+
+  terraform destroy
+
+  Nhập "yes" khi được hỏi xác nhận.
+
+  Lưu ý: Lệnh này sẽ xóa TOÀN BỘ tài nguyên đã được Terraform tạo ra,
+  bao gồm VPC, Cloud Functions, Pub/Sub, v.v. Chỉ thực hiện khi đã
+  hoàn tất toàn bộ việc kiểm thử.
+
+================================================================================
+6. XỬ LÝ SỰ CỐ THƯỜNG GẶP
+================================================================================
+
+6.1. Lỗi "terraform: command not found"
+  -> Đảm bảo Terraform đã được cài và thêm vào biến PATH.
+  -> Chạy: terraform --version
+
+6.2. Lỗi "gcloud: command not found"
+  -> Đảm bảo Google Cloud SDK đã được cài và thêm vào biến PATH.
+  -> Chạy: gcloud --version
+
+6.3. Lỗi "Permission denied" khi terraform apply
+  -> Đảm bảo tài khoản GCP có quyền Owner hoặc Editor trên dự án.
+  -> Chạy lại: gcloud auth application-default login
+
+6.4. Không nhận được cảnh báo Telegram sau 5 phút
+  -> Kiểm tra tele_bot_token và tele_chat_id trong terraform.tfvars.
+  -> Kiểm tra log của Cloud Function:
+     gcloud functions logs read orchestrator-bot --gen2 --region=asia-southeast1
+
+6.5. AI trả về lỗi (Gemini không phản hồi)
+  -> Hệ thống sẽ TỰ ĐỘNG chuyển sang OpenAI GPT (Dual-AI Fallback).
+  -> Kiểm tra gemini_api_key đã được cấu hình đúng trong terraform.tfvars.
+
+6.6. Lỗi "API not enabled"
+  -> Chạy các lệnh bật API trong file HuongDanCaiDat.txt, mục 3.
+
+================================================================================
+                        --- HẾT HƯỚNG DẪN SỬ DỤNG ---
+================================================================================

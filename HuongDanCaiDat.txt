@@ -1,0 +1,176 @@
+================================================================================
+  HƯỚNG DẪN CÀI ĐẶT
+  Đề tài: Thử nghiệm Google Chronicle — Ứng dụng AI trong giám sát và phản ứng
+          an ninh trên nền tảng Google Cloud
+================================================================================
+
+Tài liệu này hướng dẫn cài đặt đầy đủ công cụ, môi trường phát triển và thư viện
+cần thiết để triển khai hệ thống Serverless SOC.
+
+================================================================================
+1. YÊU CẦU HỆ THỐNG
+================================================================================
+
+  - Hệ điều hành: Windows 10/11, macOS, hoặc Linux (Ubuntu 20.04+)
+  - RAM tối thiểu: 8 GB
+  - Kết nối Internet ổn định (để tương tác với Google Cloud và các API)
+  - Tài khoản Google Cloud Platform (GCP) với Billing đã được kích hoạt
+  - Tài khoản Telegram để tạo Bot nhận cảnh báo
+
+================================================================================
+2. CÔNG CỤ CẦN CÀI ĐẶT
+================================================================================
+
+2.1. Terraform (>= 1.5)
+  - Mục đích: Quản lý toàn bộ hạ tầng (Infrastructure as Code).
+  - Tải về tại: https://developer.hashicorp.com/terraform/install
+  - Cài đặt:
+      + Windows: Tải file .zip, giải nén, thêm đường dẫn vào biến môi trường PATH.
+      + macOS/Linux: sử dụng Homebrew hoặc package manager:
+          brew install terraform
+  - Kiểm tra: mở terminal, chạy lệnh:
+      terraform --version
+
+2.2. Google Cloud SDK (gcloud CLI)
+  - Mục đích: Tương tác với GCP, xác thực tài khoản, quản lý tài nguyên.
+  - Tải về tại: https://docs.cloud.google.com/sdk/docs/install-sdk
+  - Cài đặt:
+      + Windows: Tải file .exe và chạy trình cài đặt.
+      + macOS/Linux: theo hướng dẫn trên trang Google.
+  - Sau khi cài, chạy lệnh khởi tạo:
+      gcloud init
+      gcloud auth application-default login
+  - Kiểm tra:
+      gcloud --version
+
+2.3. Python (>= 3.11)
+  - Mục đích: Ngôn ngữ lập trình chính của 2 Cloud Function và script tấn công.
+  - Tải về tại: https://www.python.org/downloads/
+  - Lưu ý khi cài trên Windows: tick chọn "Add Python to PATH".
+  - Kiểm tra:
+      python --version
+      pip --version
+
+2.4. Git
+  - Mục đích: Quản lý phiên bản mã nguồn.
+  - Tải về tại: https://git-scm.com/downloads
+  - Kiểm tra:
+      git --version
+
+2.5. gsutil (đi kèm Google Cloud SDK)
+  - Mục đích: Mô phỏng tấn công bằng dòng lệnh CLI (gsutil cp).
+  - Đã được cài sẵn khi cài Google Cloud SDK, không cần cài riêng.
+  - Kiểm tra:
+      gsutil version
+
+================================================================================
+3. CÁC API GOOGLE CLOUD CẦN BẬT
+================================================================================
+
+Truy cập Google Cloud Console hoặc chạy các lệnh sau để bật các API cần thiết:
+
+  gcloud services enable cloudfunctions.googleapis.com
+  gcloud services enable run.googleapis.com
+  gcloud services enable cloudbuild.googleapis.com
+  gcloud services enable monitoring.googleapis.com
+  gcloud services enable logging.googleapis.com
+  gcloud services enable securitycenter.googleapis.com
+  gcloud services enable iam.googleapis.com
+  gcloud services enable pubsub.googleapis.com
+  gcloud services enable storage.googleapis.com
+  gcloud services enable cloudresourcemanager.googleapis.com
+  gcloud services enable generativelanguage.googleapis.com
+
+================================================================================
+4. THƯ VIỆN PYTHON (DEPENDENCIES)
+================================================================================
+
+4.1. Orchestrator Bot (src/orchestrator_bot/requirements.txt)
+  - functions-framework==3.5.0    -> Framework chạy Cloud Function
+  - python-dotenv==1.0.1          -> Đọc biến môi trường từ file .env
+  - requests==2.32.3              -> Gọi HTTP (Telegram API, IP Geolocation)
+  - google-auth==2.38.0           -> Xác thực với Google Cloud
+
+4.2. Webhook Remediation (src/webhook_remediation/requirements.txt)
+  - functions-framework==3.5.0    -> Framework chạy Cloud Function
+  - google-auth==2.38.0           -> Xác thực với Google Cloud
+  - google-cloud-securitycenter==1.44.0 -> Tạo SCC Finding
+  - python-dotenv==1.0.1          -> Đọc biến môi trường từ file .env
+  - requests==2.32.3              -> Gọi HTTP
+
+4.3. Script mô phỏng tấn công (attack_simulation.py)
+  - google-cloud-storage           -> Tương tác với Cloud Storage
+  - google-auth                    -> Xác thực Service Account
+
+  Cài đặt thư viện cho script tấn công:
+      pip install google-cloud-storage google-auth
+
+  Lưu ý: Thư viện của Cloud Function được cài đặt TỰ ĐỘNG bởi Google Cloud khi
+  deploy. Không cần cài thủ công trên máy local.
+
+================================================================================
+5. TERRAFORM PROVIDERS (TỰ ĐỘNG TẢI KHI CHẠY terraform init)
+================================================================================
+
+  - hashicorp/google   ~> 6.0    -> Provider chính cho Google Cloud
+  - hashicorp/archive  ~> 2.5    -> Đóng gói source code thành .zip để deploy
+  - hashicorp/random   ~> 3.6    -> Sinh chuỗi ngẫu nhiên (signing secret)
+
+================================================================================
+6. CẤU HÌNH BIẾN MÔI TRƯỜNG
+================================================================================
+
+6.1. File terraform.tfvars
+  - Sao chép file mẫu:
+      copy terraform.tfvars.example terraform.tfvars      (Windows)
+      cp terraform.tfvars.example terraform.tfvars         (macOS/Linux)
+  - Mở file terraform.tfvars và điền các giá trị:
+      + project_id            : ID dự án GCP
+      + project_number        : Số dự án GCP
+      + organization_id       : ID tổ chức GCP
+      + region                : Vùng triển khai (mặc định: asia-southeast1)
+      + gemini_api_key        : API key Gemini (lấy từ Google AI Studio)
+      + tele_bot_token        : Token của Telegram Bot (lấy từ @BotFather)
+      + tele_chat_id          : Chat ID của Telegram (lấy từ @userinfobot)
+
+6.2. API Key bên ngoài
+  - Gemini API Key: Truy cập https://aistudio.google.com/apikey để tạo.
+  - OpenAI API Key (Fallback): Truy cập https://platform.openai.com/api-keys
+    để tạo (chỉ cần thiết nếu muốn test cơ chế Dual-AI Fallback).
+  - Telegram Bot: Tạo bot tại @BotFather trên Telegram, lấy Bot Token.
+
+================================================================================
+7. CẤU TRÚC THƯ MỤC DỰ ÁN
+================================================================================
+
+  KLTN_2026_serverless-soc-lab/
+  |-- main.tf                        # Cấu hình Terraform gốc
+  |-- variables.tf                   # Biến đầu vào
+  |-- outputs.tf                     # Giá trị đầu ra
+  |-- providers.tf                   # Cấu hình provider GCP
+  |-- backend.tf                     # Terraform state backend
+  |-- terraform.tfvars.example       # File mẫu biến Terraform
+  |-- .env.example                   # File mẫu biến môi trường
+  |-- attack_simulation.py           # Script mô phỏng tấn công (Python SDK)
+  |-- yaral_detection_rules.md       # Các luật phát hiện YARA-L
+  |
+  |-- modules/
+  |   |-- iam/                       # Service Accounts + IAM roles
+  |   |-- network/                   # VPC + Firewall rules
+  |   |-- storage/                   # Honeypot bucket
+  |   |-- logging_data/              # Log Sink + Pub/Sub routing
+  |   |-- monitoring/                # Log-based Metric + Alert Policy
+  |   |-- scc/                       # Security Command Center source
+  |   +-- serverless/                # Cloud Functions (Gen2)
+  |
+  +-- src/
+      |-- orchestrator_bot/          # Hàm AI phân tích + làm giàu ngữ cảnh
+      |   |-- main.py
+      |   +-- requirements.txt
+      +-- webhook_remediation/       # Hàm vô hiệu hóa SA + tạo SCC Finding
+          |-- main.py
+          +-- requirements.txt
+
+================================================================================
+                          --- HẾT HƯỚNG DẪN CÀI ĐẶT ---
+================================================================================
